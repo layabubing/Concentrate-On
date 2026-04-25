@@ -36,6 +36,7 @@ class FocusPage(QWidget):
 
         self.focus_button = QPushButton("开始专注", self.button_holder)
         self.focus_button.setCheckable(True)
+        self.focus_button.setFlat(True)
         self.focus_button.clicked.connect(self._toggle_focus)
         self.focus_button.pressed.connect(self._on_button_pressed)
         self.focus_button.released.connect(self._on_button_released)
@@ -79,23 +80,29 @@ class FocusPage(QWidget):
 
     def _button_style(self) -> str:
         font_size = self._scale(24)
-        radius = self._button_base_size // 2  # 关键：半径 = 一半
+        radius = 9999
 
         if self._is_focusing:
             bg_color = "#2fbf71"
             hover_color = "#25a962"
+            pressed_color = "#1f914f"
         else:
             bg_color = "#3f7cf7"
             hover_color = "#3569d1"
+            pressed_color = "#2e5fb8"
 
         return (
             "QPushButton {"
-            f"background: {bg_color};"
+            f"background-color: {bg_color};"
             "color: white;"
             "border: none;"
             f"border-radius: {radius}px;"
             f"font-size: {font_size}px;"
             "font-weight: 600;"
             "}"
-            f"QPushButton:hover {{ background: {hover_color}; }}"
+            f"QPushButton:hover {{ background-color: {hover_color}; border-radius: {radius}px; border: none; }}"
+            f"QPushButton:pressed {{ background-color: {pressed_color}; border-radius: {radius}px; border: none; }}"
+            f"QPushButton:checked {{ background-color: {bg_color}; border-radius: {radius}px; border: none; }}"
+            f"QPushButton:checked:hover {{ background-color: {hover_color}; border-radius: {radius}px; border: none; }}"
+            f"QPushButton:checked:pressed {{ background-color: {pressed_color}; border-radius: {radius}px; border: none; }}"
         )
