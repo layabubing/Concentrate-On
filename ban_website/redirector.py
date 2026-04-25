@@ -1,19 +1,18 @@
-﻿import atexit
+from __future__ import annotations
+
+import atexit
 import ctypes
 import os
 import platform
 import signal
-import subprocess
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
-# Change this if needed.
 TARGET_DOMAIN = "baidu.com"
 REDIRECT_IP = "127.0.0.1"
-TAG = "# Added by Python Redirector"
-
-HOSTS_MODIFIED = False
+TAG = "# Added by ConcentrateOn"
 
 
 def get_hosts_path() -> str:
@@ -37,103 +36,125 @@ def elevate_privileges() -> None:
         script = os.path.abspath(sys.argv[0])
         params = " ".join(f'"{arg}"' for arg in sys.argv[1:])
         ret = ctypes.windll.shell32.ShellExecuteW(
-            None, "runas", executable, f'"{script}" {params}', None, 1
+            None,
+            "runas",
+            executable,
+            f'"{script}" {params}',
+            None,
+            1,
         )
         if int(ret) <= 32:
             print("[x] Failed to elevate privileges.")
         sys.exit(0)
+
     os.execvp("sudo", ["sudo", sys.executable, *sys.argv])
 
 
-def remove_hosts_entry(domain: str) -> None:
-    hosts_path = get_hosts_path()
-    try:
-        with open(hosts_path, "r", encoding="utf-8", errors="ignore") as f:
-            lines = f.readlines()
-
-        with open(hosts_path, "w", encoding="utf-8") as f:
-            for line in lines:
-                if not (domain in line and TAG in line):
-                    f.write(line)
-
-        print(f"[-] Removed hosts entries for: {domain}")
-    except Exception as exc:
-        print(f"[x] Failed to cleanup hosts: {exc}")
+def normalize_domain(value: str) -> str:
+    cleaned = value.strip().lower()
+    if "://" in cleaned:
+        cleaned = cleaned.split("://", 1)[1]
+    cleaned = cleaned.split("/", 1)[0]
+    cleaned = cleaned.split("?", 1)[0]
+    cleaned = cleaned.strip(".")
+    return cleaned
 
 
-def add_hosts_entry(domain: str, ip: str = REDIRECT_IP) -> bool:
-    global HOSTS_MODIFIED
-
-    hosts_path = get_hosts_path()
-    entries = [
-        f"{ip} {domain} {TAG}\n",
-        f"{ip} www.{domain} {TAG}\n",
-    ]
-
-    try:
-        with open(hosts_path, "r", encoding="utf-8", errors="ignore") as f:
-            lines = f.readlines()
-
-        with open(hosts_path, "w", encoding="utf-8") as f:
-            for line in lines:
-                if not (domain in line and TAG in line):
-                    f.write(line)
-            for entry in entries:
-                f.write(entry)
-
-        print(f"[+] Hosts updated: {domain} -> {ip}")
-        HOSTS_MODIFIED = True
-        return True
-    except PermissionError:
-        print("[x] Permission denied when writing hosts.")
-        return False
-    except Exception as exc:
-        print(f"[x] Failed to update hosts: {exc}")
-        return False
+@dataclass
+class BlockerStatus:
+    active_domains: list[str]
+    hosts_path: str
+    is_admin: bool
 
 
-def cleanup() -> None:
-    global HOSTS_MODIFIED
-    if HOSTS_MODIFIED:
-        remove_hosts_entry(TARGET_DOMAIN)
-        HOSTS_MODIFIED = False
+class WebsiteBlocker:
+    def __init__(self, redirect_ip: str = REDIRECT_IP, tag: str = TAG) -> None:
+        self.redirect_ip = redirect_ip
+        self.tag = tag
+        self.hosts_path = Path(get_hosts_path())
 
+    def status(self) -> BlockerStatus:
+        return BlockerStatus(
+            active_domains=self.active_domains(),
+            hosts_path=str(self.hosts_path),
+            is_admin=is_admin(),
+        )
 
-def handle_signal(_signum, _frame) -> None:
-    cleanup()
-    sys.exit(0)
+    def active_domains(self) -> list[str]:
+        if not self.hosts_path.exists():
+            return []
 
+        domains: list[str] = []
+        for line in self.hosts_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+            if self.tag not in line:
+                continue
+            parts = line.split()
+            if len(parts) >= 2:
+                domains.append(parts[1].removeprefix("www."))
 
-def start_watchdog() -> None:
-    watchdog_path = Path(__file__).with_name("watchdog.py")
-    if not watchdog_path.exists():
-        return
+        return sorted(set(domains))
 
-    env = os.environ.copy()
-    env["PARENT_PID"] = str(os.getpid())
-    subprocess.Popen(
-        [sys.executable, str(watchdog_path)],
-        env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    def clear(self) -> None:
+        self._write_domains([])
+
+    def apply(self, domains: list[str]) -> list[str]:
+        cleaned = self._prepare_domains(domains)
+        self._write_domains(cleaned)
+        return cleaned
+
+    def _prepare_domains(self, domains: list[str]) -> list[str]:
+        result: list[str] = []
+        for domain in domains:
+            normalized = normalize_domain(domain)
+            if normalized and normalized not in result:
+                result.append(normalized)
+        return result
+
+    def _write_domains(self, domains: list[str]) -> None:
+        if not is_admin():
+            raise PermissionError("Administrator privileges are required to edit the hosts file.")
+
+        existing_lines: list[str] = []
+        if self.hosts_path.exists():
+            existing_lines = self.hosts_path.read_text(
+                encoding="utf-8",
+                errors="ignore",
+            ).splitlines()
+
+        kept_lines = [line for line in existing_lines if self.tag not in line]
+        new_lines = list(kept_lines)
+        for domain in domains:
+            new_lines.append(f"{self.redirect_ip} {domain} {self.tag}")
+            new_lines.append(f"{self.redirect_ip} www.{domain} {self.tag}")
+
+        content = "\n".join(new_lines).rstrip()
+        if content:
+            content += "\n"
+        self.hosts_path.write_text(content, encoding="utf-8")
 
 
 def run_redirector() -> None:
+    blocker = WebsiteBlocker()
     if not is_admin():
         elevate_privileges()
 
-    remove_hosts_entry(TARGET_DOMAIN)
+    def cleanup() -> None:
+        try:
+            blocker.clear()
+        except Exception:
+            pass
+
+    def handle_signal(_signum, _frame) -> None:
+        cleanup()
+        sys.exit(0)
+
+    cleanup()
+    blocker.apply([TARGET_DOMAIN])
     atexit.register(cleanup)
     signal.signal(signal.SIGINT, handle_signal)
     signal.signal(signal.SIGTERM, handle_signal)
 
-    if not add_hosts_entry(TARGET_DOMAIN, REDIRECT_IP):
-        sys.exit(1)
-
-    start_watchdog()
-    print(f"[*] Redirecting {TARGET_DOMAIN} to {REDIRECT_IP}. Press Ctrl+C to stop.")
-
+    print(f"[*] Redirecting {TARGET_DOMAIN} to {blocker.redirect_ip}. Press Ctrl+C to stop.")
     try:
         while True:
             time.sleep(1)

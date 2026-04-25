@@ -1,302 +1,461 @@
 from __future__ import annotations
 
-import importlib.util
-import sys
+import atexit
+import json
+import mimetypes
+import threading
+import time
+import webbrowser
+from argparse import ArgumentParser, Namespace
+from dataclasses import asdict, dataclass, field
+from datetime import datetime
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
+from urllib.parse import urlparse
+
+from ban_website.redirector import WebsiteBlocker
 
 try:
-    from PyQt6.QtCore import Qt, QSize
-    from PyQt6.QtGui import QIcon
-    from PyQt6.QtWidgets import (
-        QApplication,
-        QButtonGroup,
-        QFrame,
-        QHBoxLayout,
-        QMainWindow,
-        QSizePolicy,
-        QStackedWidget,
-        QToolButton,
-        QVBoxLayout,
-        QWidget,
-    )
+    import webview
 
-    IS_QT6 = True
+    HAS_WEBVIEW = True
 except ImportError:
-    from PyQt5.QtCore import Qt, QSize
-    from PyQt5.QtGui import QIcon
-    from PyQt5.QtWidgets import (
-        QApplication,
-        QButtonGroup,
-        QFrame,
-        QHBoxLayout,
-        QMainWindow,
-        QSizePolicy,
-        QStackedWidget,
-        QToolButton,
-        QVBoxLayout,
-        QWidget,
-    )
+    webview = None
+    HAS_WEBVIEW = False
 
-    IS_QT6 = False
-
-if IS_QT6:
-    CURSOR_POINTING = Qt.CursorShape.PointingHandCursor
-    TB_TEXT_BESIDE = Qt.ToolButtonStyle.ToolButtonTextBesideIcon
-    TB_TEXT_UNDER = Qt.ToolButtonStyle.ToolButtonTextUnderIcon
-    POLICY_EXPANDING = QSizePolicy.Policy.Expanding
-    POLICY_FIXED = QSizePolicy.Policy.Fixed
-else:
-    CURSOR_POINTING = Qt.PointingHandCursor
-    TB_TEXT_BESIDE = Qt.ToolButtonTextBesideIcon
-    TB_TEXT_UNDER = Qt.ToolButtonTextUnderIcon
-    POLICY_EXPANDING = QSizePolicy.Expanding
-    POLICY_FIXED = QSizePolicy.Fixed
+PROJECT_ROOT = Path(__file__).resolve().parent
+WEB_ROOT = PROJECT_ROOT / "webui"
+DATA_ROOT = PROJECT_ROOT / ".concentrateon"
+STATE_FILE = DATA_ROOT / "state.json"
 
 
-def _load_page_class(filename: str, class_name: str):
-    module_path = Path(__file__).resolve().parent / "ui" / filename
-    spec = importlib.util.spec_from_file_location(f"concentrateon_{class_name.lower()}", module_path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Cannot load module: {module_path}")
-
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-
-    page_class = getattr(module, class_name, None)
-    if page_class is None:
-        raise ImportError(f"{class_name} not found in {module_path}")
-    return page_class
+def now_iso() -> str:
+    return datetime.now().isoformat(timespec="seconds")
 
 
-FocusPage = _load_page_class("focus.py", "FocusPage")
-StatPage = _load_page_class("stat.py", "StatPage")
-SettingPage = _load_page_class("setting.py", "SettingPage")
+def parse_datetime(value: str) -> datetime:
+    return datetime.fromisoformat(value)
 
 
-def _enable_high_dpi() -> None:
-    if not IS_QT6:
-        QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
-        QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+def sanitize_domain_list(raw_domains: list[str] | str | None) -> list[str]:
+    if raw_domains is None:
+        return []
+
+    if isinstance(raw_domains, str):
+        candidates = raw_domains.replace("\r", "").replace(",", "\n").split("\n")
+    else:
+        candidates = [str(item) for item in raw_domains]
+
+    domains: list[str] = []
+    for candidate in candidates:
+        cleaned = candidate.strip().lower()
+        if not cleaned:
+            continue
+        if "://" in cleaned:
+            cleaned = cleaned.split("://", 1)[1]
+        cleaned = cleaned.split("/", 1)[0]
+        cleaned = cleaned.split("?", 1)[0]
+        cleaned = cleaned.strip(".")
+        if cleaned and cleaned not in domains:
+            domains.append(cleaned)
+    return domains
 
 
-class MainScreen(QMainWindow):
-    def __init__(self) -> None:
-        super().__init__()
-        self.setWindowTitle("ConcentrateOn")
+@dataclass
+class Settings:
+    blocked_domains: list[str] = field(default_factory=lambda: ["baidu.com"])
+    session_minutes: int = 45
 
-        self.project_root = Path(__file__).resolve().parent
-        self.current_key = "focus"
-        self.ui_scale = self._detect_ui_scale()
 
-        self._left_buttons: dict[str, QToolButton] = {}
-        self._bottom_buttons: dict[str, QToolButton] = {}
+@dataclass
+class SessionRecord:
+    started_at: str
+    ended_at: str
+    duration_seconds: int
+    blocked_domains: list[str]
 
-        self._apply_window_size()
-        self._setup_ui()
-        self._apply_styles()
-        self._sync_nav_selection("focus")
-        self._adapt_navigation_mode()
 
-    def _detect_ui_scale(self) -> float:
-        app = QApplication.instance()
-        if app is None:
-            return 1.0
+@dataclass
+class ActiveSession:
+    started_at: str
+    planned_minutes: int
+    blocked_domains: list[str]
+    blocking_active: bool
+    blocking_message: str | None = None
 
-        screen = app.primaryScreen()
-        if screen is None:
-            return 1.0
 
-        size = screen.availableGeometry().size()
-        long_edge = max(size.width(), size.height())
-        logical_dpi = screen.logicalDotsPerInch()
+@dataclass
+class AppState:
+    settings: Settings = field(default_factory=Settings)
+    current_session: ActiveSession | None = None
+    history: list[SessionRecord] = field(default_factory=list)
 
-        scale_from_resolution = long_edge / 1920.0
-        scale_from_dpi = logical_dpi / 96.0
-        return min(max(scale_from_resolution, scale_from_dpi, 1.0), 1.5)
 
-    def _scale(self, value: int) -> int:
-        return max(1, int(round(value * self.ui_scale)))
+class StateStore:
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.path.parent.mkdir(parents=True, exist_ok=True)
 
-    def _apply_window_size(self) -> None:
-        app = QApplication.instance()
-        if app is None or app.primaryScreen() is None:
-            self.resize(1200, 780)
-            return
+    def load(self) -> AppState:
+        if not self.path.exists():
+            return AppState()
 
-        available = app.primaryScreen().availableGeometry()
-        width = min(int(available.width() * 0.72), self._scale(1600))
-        height = min(int(available.height() * 0.78), self._scale(980))
-        self.resize(max(width, self._scale(1000)), max(height, self._scale(700)))
+        payload = json.loads(self.path.read_text(encoding="utf-8"))
+        settings = Settings(**payload.get("settings", {}))
+        current_payload = payload.get("current_session")
+        current_session = ActiveSession(**current_payload) if current_payload else None
+        history = [SessionRecord(**item) for item in payload.get("history", [])]
+        return AppState(settings=settings, current_session=current_session, history=history)
 
-    def _setup_ui(self) -> None:
-        root = QWidget(self)
-        self.setCentralWidget(root)
-
-        root_layout = QVBoxLayout(root)
-        root_layout.setContentsMargins(0, 0, 0, 0)
-        root_layout.setSpacing(0)
-
-        body = QWidget(root)
-        body_layout = QHBoxLayout(body)
-        body_layout.setContentsMargins(0, 0, 0, 0)
-        body_layout.setSpacing(0)
-
-        self.left_nav = self._build_nav_container(vertical=True)
-        body_layout.addWidget(self.left_nav)
-
-        self.pages = QStackedWidget(body)
-        self.pages.addWidget(FocusPage(self._scale))
-        self.pages.addWidget(StatPage(self._scale))
-        self.pages.addWidget(SettingPage(self._scale))
-        body_layout.addWidget(self.pages, 1)
-
-        root_layout.addWidget(body, 1)
-
-        self.bottom_nav = self._build_nav_container(vertical=False)
-        root_layout.addWidget(self.bottom_nav)
-
-    def _build_nav_container(self, vertical: bool) -> QFrame:
-        nav = QFrame(self)
-        nav.setObjectName("navContainer")
-
-        layout = QVBoxLayout(nav) if vertical else QHBoxLayout(nav)
-        pad = self._scale(10)
-        layout.setContentsMargins(pad, pad, pad, pad)
-        layout.setSpacing(self._scale(8))
-
-        button_group = QButtonGroup(nav)
-        button_group.setExclusive(True)
-
-        items = [
-            ("focus", "专注", "assets/icons/focus.png", 0),
-            ("stat", "统计", "assets/icons/stat.png", 1),
-            ("setting", "设置", "assets/icons/setting.png", 2),
-        ]
-
-        button_store = self._left_buttons if vertical else self._bottom_buttons
-
-        if vertical:
-            nav.setFixedWidth(self._scale(132))
-        else:
-            nav.setFixedHeight(self._scale(88))
-
-        for key, text, icon_rel, index in items:
-            btn = QToolButton(nav)
-            btn.setCheckable(True)
-            btn.setAutoExclusive(False)
-            btn.setCursor(CURSOR_POINTING)
-            btn.setProperty("selected", False)
-            btn.setText(text)
-            btn.setIcon(QIcon(str(self.project_root / icon_rel)))
-            icon = self._scale(24)
-            btn.setIconSize(QSize(icon, icon))
-            btn.clicked.connect(lambda _checked, k=key: self.set_current_page(k))
-
-            if vertical:
-                btn.setToolButtonStyle(TB_TEXT_BESIDE)
-                btn.setMinimumHeight(self._scale(46))
-                btn.setSizePolicy(POLICY_EXPANDING, POLICY_FIXED)
-            else:
-                btn.setToolButtonStyle(TB_TEXT_UNDER)
-                btn.setSizePolicy(POLICY_EXPANDING, POLICY_EXPANDING)
-
-            button_group.addButton(btn, index)
-            layout.addWidget(btn)
-            button_store[key] = btn
-
-        if vertical:
-            layout.addStretch(1)
-
-        return nav
-
-    def _apply_styles(self) -> None:
-        button_radius = self._scale(10)
-        button_py = self._scale(6)
-        button_px = self._scale(10)
-        button_font = self._scale(14)
-        title_font = self._scale(28)
-        subtitle_font = self._scale(15)
-
-        self.setStyleSheet(
-            f"""
-            QMainWindow {{
-                background: #f5f7fb;
-            }}
-            #navContainer {{
-                background: #ffffff;
-                border: 1px solid #dbe3f0;
-            }}
-            QToolButton {{
-                color: #2f3b52;
-                border: 0;
-                border-radius: {button_radius}px;
-                padding: {button_py}px {button_px}px;
-                text-align: left;
-                font-size: {button_font}px;
-            }}
-            QToolButton[selected="true"] {{
-                background: #dce9ff;
-                color: #17376e;
-                font-weight: 600;
-            }}
-            QToolButton:hover {{
-                background: #eef3fb;
-            }}
-            QLabel#pageTitle {{
-                color: #1c2740;
-                font-size: {title_font}px;
-                font-weight: 600;
-            }}
-            QLabel#pageSubtitle {{
-                color: #4b5877;
-                font-size: {subtitle_font}px;
-            }}
-            """
+    def save(self, state: AppState) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        serializable = {
+            "settings": asdict(state.settings),
+            "current_session": asdict(state.current_session) if state.current_session else None,
+            "history": [asdict(item) for item in state.history[-100:]],
+        }
+        self.path.write_text(
+            json.dumps(serializable, ensure_ascii=False, indent=2),
+            encoding="utf-8",
         )
 
-    def _sync_nav_selection(self, key: str) -> None:
-        for btn in list(self._left_buttons.values()) + list(self._bottom_buttons.values()):
-            btn.setProperty("selected", False)
-            btn.setChecked(False)
-            btn.style().unpolish(btn)
-            btn.style().polish(btn)
 
-        if key in self._left_buttons:
-            self._left_buttons[key].setChecked(True)
-            self._left_buttons[key].setProperty("selected", True)
-            self._left_buttons[key].style().unpolish(self._left_buttons[key])
-            self._left_buttons[key].style().polish(self._left_buttons[key])
+class FocusService:
+    def __init__(self, store: StateStore, blocker: WebsiteBlocker) -> None:
+        self.store = store
+        self.blocker = blocker
+        self.lock = threading.Lock()
+        self.state = store.load()
+        self._recover_previous_session()
+        atexit.register(self.shutdown)
 
-        if key in self._bottom_buttons:
-            self._bottom_buttons[key].setChecked(True)
-            self._bottom_buttons[key].setProperty("selected", True)
-            self._bottom_buttons[key].style().unpolish(self._bottom_buttons[key])
-            self._bottom_buttons[key].style().polish(self._bottom_buttons[key])
+    def snapshot(self) -> dict[str, Any]:
+        with self.lock:
+            return self._build_snapshot()
 
-    def _adapt_navigation_mode(self) -> None:
-        is_landscape = self.width() > self.height()
-        self.left_nav.setVisible(is_landscape)
-        self.bottom_nav.setVisible(not is_landscape)
+    def update_settings(self, payload: dict[str, Any]) -> dict[str, Any]:
+        with self.lock:
+            domains = payload.get("blocked_domains", self.state.settings.blocked_domains)
+            session_minutes = payload.get("session_minutes", self.state.settings.session_minutes)
+            session_minutes = max(5, min(int(session_minutes), 240))
 
-    def set_current_page(self, key: str) -> None:
-        page_indices = {"focus": 0, "stat": 1, "setting": 2}
-        self.pages.setCurrentIndex(page_indices.get(key, 0))
-        self.current_key = key
-        self._sync_nav_selection(key)
+            self.state.settings = Settings(
+                blocked_domains=sanitize_domain_list(domains),
+                session_minutes=session_minutes,
+            )
 
-    def resizeEvent(self, event) -> None:
-        super().resizeEvent(event)
-        self._adapt_navigation_mode()
+            if self.state.current_session is not None:
+                self.state.current_session.planned_minutes = session_minutes
+                self.state.current_session.blocked_domains = list(self.state.settings.blocked_domains)
+                self._refresh_blocking()
+
+            self.store.save(self.state)
+            return self._build_snapshot()
+
+    def start_focus(self) -> dict[str, Any]:
+        with self.lock:
+            if self.state.current_session is not None:
+                return self._build_snapshot()
+
+            session = ActiveSession(
+                started_at=now_iso(),
+                planned_minutes=self.state.settings.session_minutes,
+                blocked_domains=list(self.state.settings.blocked_domains),
+                blocking_active=False,
+                blocking_message=None,
+            )
+            self.state.current_session = session
+            self._refresh_blocking()
+            self.store.save(self.state)
+            return self._build_snapshot()
+
+    def stop_focus(self) -> dict[str, Any]:
+        with self.lock:
+            if self.state.current_session is None:
+                return self._build_snapshot()
+
+            session = self.state.current_session
+            started_at = parse_datetime(session.started_at)
+            ended_at = datetime.now()
+            duration_seconds = max(0, int((ended_at - started_at).total_seconds()))
+            self.state.history.append(
+                SessionRecord(
+                    started_at=session.started_at,
+                    ended_at=ended_at.isoformat(timespec="seconds"),
+                    duration_seconds=duration_seconds,
+                    blocked_domains=list(session.blocked_domains),
+                )
+            )
+
+            self.state.current_session = None
+            self._disable_blocking()
+            self.store.save(self.state)
+            return self._build_snapshot()
+
+    def shutdown(self) -> None:
+        with self.lock:
+            self._disable_blocking()
+            self.store.save(self.state)
+
+    def _recover_previous_session(self) -> None:
+        if self.state.current_session is None:
+            return
+
+        session = self.state.current_session
+        duration_seconds = max(0, int((datetime.now() - parse_datetime(session.started_at)).total_seconds()))
+        self.state.history.append(
+            SessionRecord(
+                started_at=session.started_at,
+                ended_at=now_iso(),
+                duration_seconds=duration_seconds,
+                blocked_domains=list(session.blocked_domains),
+            )
+        )
+        self.state.current_session = None
+        self._disable_blocking()
+        self.store.save(self.state)
+
+    def _refresh_blocking(self) -> None:
+        session = self.state.current_session
+        if session is None:
+            return
+
+        if not session.blocked_domains:
+            session.blocking_active = False
+            session.blocking_message = "当前没有配置需要屏蔽的网站。"
+            return
+
+        try:
+            self.blocker.apply(session.blocked_domains)
+            session.blocking_active = True
+            session.blocking_message = None
+        except PermissionError:
+            session.blocking_active = False
+            session.blocking_message = "专注已开始，但当前没有管理员权限，网站屏蔽未生效。"
+        except Exception as exc:
+            session.blocking_active = False
+            session.blocking_message = f"网站屏蔽启动失败：{exc}"
+
+    def _disable_blocking(self) -> None:
+        try:
+            self.blocker.clear()
+        except Exception:
+            pass
+
+    def _build_snapshot(self) -> dict[str, Any]:
+        current = self.state.current_session
+        total_seconds = sum(item.duration_seconds for item in self.state.history)
+        today = datetime.now().date()
+        today_sessions = [
+            item
+            for item in self.state.history
+            if parse_datetime(item.ended_at).date() == today
+        ]
+        blocker_status = self.blocker.status()
+
+        response: dict[str, Any] = {
+            "settings": asdict(self.state.settings),
+            "current_session": None,
+            "stats": {
+                "total_sessions": len(self.state.history),
+                "total_focus_seconds": total_seconds,
+                "today_sessions": len(today_sessions),
+                "today_focus_seconds": sum(item.duration_seconds for item in today_sessions),
+            },
+            "recent_sessions": [asdict(item) for item in reversed(self.state.history[-8:])],
+            "blocker": {
+                "is_admin": blocker_status.is_admin,
+                "hosts_path": blocker_status.hosts_path,
+            },
+        }
+
+        if current is not None:
+            response["current_session"] = {
+                **asdict(current),
+                "elapsed_seconds": max(
+                    0,
+                    int((datetime.now() - parse_datetime(current.started_at)).total_seconds()),
+                ),
+            }
+
+        return response
+
+
+class ConcentrateHTTPServer(ThreadingHTTPServer):
+    def __init__(self, server_address: tuple[str, int], service: FocusService) -> None:
+        super().__init__(server_address, ConcentrateRequestHandler)
+        self.service = service
+
+
+class ConcentrateRequestHandler(BaseHTTPRequestHandler):
+    server: ConcentrateHTTPServer
+
+    def do_GET(self) -> None:
+        parsed = urlparse(self.path)
+        if parsed.path == "/api/state":
+            self._send_json(self.server.service.snapshot())
+            return
+
+        self._serve_static(parsed.path)
+
+    def do_POST(self) -> None:
+        parsed = urlparse(self.path)
+        body = self._read_json_body()
+
+        if parsed.path == "/api/focus/start":
+            self._send_json(self.server.service.start_focus())
+            return
+
+        if parsed.path == "/api/focus/stop":
+            self._send_json(self.server.service.stop_focus())
+            return
+
+        if parsed.path == "/api/settings":
+            self._send_json(self.server.service.update_settings(body))
+            return
+
+        self._send_json({"error": "Not found"}, status=HTTPStatus.NOT_FOUND)
+
+    def log_message(self, format: str, *args: Any) -> None:
+        return
+
+    def _read_json_body(self) -> dict[str, Any]:
+        content_length = int(self.headers.get("Content-Length", "0"))
+        if content_length == 0:
+            return {}
+
+        raw = self.rfile.read(content_length).decode("utf-8")
+        if not raw.strip():
+            return {}
+        return json.loads(raw)
+
+    def _serve_static(self, route_path: str) -> None:
+        file_path = self._resolve_static_path(route_path)
+        if file_path is None or not file_path.exists() or not file_path.is_file():
+            self._send_json({"error": "Not found"}, status=HTTPStatus.NOT_FOUND)
+            return
+
+        mime_type, _ = mimetypes.guess_type(file_path.name)
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", mime_type or "application/octet-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        self.wfile.write(file_path.read_bytes())
+
+    def _resolve_static_path(self, route_path: str) -> Path | None:
+        if route_path in {"", "/"}:
+            return WEB_ROOT / "index.html"
+
+        relative = route_path.lstrip("/")
+        if relative.startswith("assets/"):
+            candidate = PROJECT_ROOT / relative
+        else:
+            candidate = WEB_ROOT / relative
+
+        try:
+            candidate.resolve().relative_to(PROJECT_ROOT.resolve())
+        except ValueError:
+            return None
+        return candidate
+
+    def _send_json(self, payload: dict[str, Any], status: HTTPStatus = HTTPStatus.OK) -> None:
+        content = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(content)))
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        self.wfile.write(content)
+
+
+@dataclass
+class AppRuntime:
+    service: FocusService
+    server: ConcentrateHTTPServer
+    thread: threading.Thread
+    address: str
+
+    def shutdown(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+        self.service.shutdown()
+
+
+def start_runtime(host: str, port: int) -> AppRuntime:
+    service = FocusService(StateStore(STATE_FILE), WebsiteBlocker())
+    server = ConcentrateHTTPServer((host, port), service)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    address = f"http://{server.server_address[0]}:{server.server_address[1]}"
+    return AppRuntime(service=service, server=server, thread=thread, address=address)
+
+
+def open_browser(runtime: AppRuntime) -> None:
+    webbrowser.open(runtime.address)
+    print(f"已在浏览器中打开：{runtime.address}")
+
+
+def run_desktop_window(runtime: AppRuntime) -> bool:
+    if not HAS_WEBVIEW:
+        return False
+
+    window = webview.create_window(
+        "ConcentrateOn",
+        runtime.address,
+        width=1320,
+        height=900,
+        min_size=(1100, 760),
+    )
+
+    print(f"桌面应用已启动：{runtime.address}")
+    webview.start()
+    return window is not None
+
+
+def run_service_loop(runtime: AppRuntime, launch_browser: bool = False) -> None:
+    if launch_browser:
+        open_browser(runtime)
+
+    print(f"服务运行中：{runtime.address}")
+    print("按 Ctrl+C 退出。")
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        pass
+
+
+def parse_args() -> Namespace:
+    parser = ArgumentParser(description="启动 ConcentrateOn Web UI 应用。")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=0)
+    parser.add_argument("--browser", action="store_true", help="在浏览器中打开，而不是桌面窗口。")
+    parser.add_argument("--headless", action="store_true", help="仅启动本地服务，不自动打开界面。")
+    return parser.parse_args()
 
 
 def main() -> None:
-    _enable_high_dpi()
-    app = QApplication(sys.argv)
-    window = MainScreen()
-    window.show()
-    if hasattr(app, "exec"):
-        sys.exit(app.exec())
-    sys.exit(app.exec_())
+    args = parse_args()
+    runtime = start_runtime(args.host, args.port)
+
+    try:
+        if args.headless:
+            run_service_loop(runtime, launch_browser=False)
+            return
+
+        if args.browser:
+            run_service_loop(runtime, launch_browser=True)
+            return
+
+        if run_desktop_window(runtime):
+            return
+
+        print("未检测到可用的桌面 WebView，已自动回退到浏览器模式。")
+        run_service_loop(runtime, launch_browser=True)
+    finally:
+        runtime.shutdown()
 
 
 if __name__ == "__main__":
