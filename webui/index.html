@@ -18,176 +18,10 @@
             <p class="top-note">{{ pageNote }}</p>
           </header>
 
-          <section v-show="activePage === 'focus'" class="page page-focus" aria-label="专注">
-            <section class="focus-card" aria-labelledby="focus-title">
-              <div class="timer-block">
-                <p id="focus-title" class="label">{{ isFocusing ? sessionTypeLabel(currentSession.session_type) : "准备中" }}</p>
-                <strong class="timer">{{ isFocusing ? remainingText : elapsedText }}</strong>
-                <p class="target">{{ isFocusing ? `剩余 · ${targetText}` : targetText }}</p>
-              </div>
-
-              <button class="main-action" :class="{ active: isFocusing }" :disabled="submitting" @click="toggleFocus">
-                {{ isFocusing ? "结束" : "开始" }}
-              </button>
-
-              <p class="message" :class="{ warning: statusIsWarning }">{{ statusMessage }}</p>
-            </section>
-
-            <section class="pomodoro-card panel">
-              <div class="section-head compact-head">
-                <div>
-                  <h2>番茄钟</h2>
-                  <small>已完成 {{ pomodoro.completed }} 个，下一次休息：{{ nextBreakLabel }}</small>
-                </div>
-              </div>
-              <div class="pomodoro-actions">
-                <select v-model="selectedTaskId" :disabled="isFocusing">
-                  <option value="">不关联任务</option>
-                  <option v-for="task in openTasks" :key="task.id" :value="task.id">{{ task.title }}</option>
-                </select>
-                <button class="save-button" type="button" :disabled="submitting || isFocusing" @click="startPomodoro">开始番茄钟</button>
-                <button class="subtle-button" type="button" :disabled="submitting || isFocusing" @click="startBreak()">开始休息</button>
-              </div>
-            </section>
-
-            <section class="quick-status" aria-label="当前设置">
-              <article class="quiet-card">
-                <span>今日</span>
-                <strong>{{ formatMinutes(stats.today_focus_seconds) }}</strong>
-                <small>{{ stats.today_sessions }} 场</small>
-              </article>
-              <article class="quiet-card">
-                <span>屏蔽</span>
-                <strong>{{ settings.blocked_domains.length }} 个</strong>
-                <small>{{ blockerLabel }}</small>
-              </article>
-            </section>
-          </section>
-
-          <section v-show="activePage === 'tasks'" class="page page-tasks" aria-label="任务">
-            <section class="panel task-panel">
-              <form class="task-form" @submit.prevent="addTask">
-                <input v-model="newTaskTitle" type="text" placeholder="添加一个任务" autocomplete="off" />
-                <button class="save-button" type="submit" :disabled="taskSubmitting">
-                  {{ taskSubmitting ? "添加中" : "添加" }}
-                </button>
-              </form>
-              <p v-if="taskMessage" class="task-message">{{ taskMessage }}</p>
-
-              <div v-if="!tasks.length" class="empty-state">还没有任务。</div>
-              <div v-else class="task-list">
-                <article v-for="task in openTasks" :key="task.id" class="task-item">
-                  <label>
-                    <input type="checkbox" :checked="task.completed" :disabled="taskSubmitting" @change="toggleTask(task)" />
-                    <span>{{ task.title }}</span>
-                  </label>
-                  <div class="task-meta">
-                    <small>🍅 {{ task.pomodoros }}</small>
-                    <button type="button" :disabled="taskSubmitting" @click="deleteTask(task)">删除</button>
-                  </div>
-                </article>
-                <article v-for="task in doneTasks" :key="task.id" class="task-item done">
-                  <label>
-                    <input type="checkbox" :checked="task.completed" :disabled="taskSubmitting" @change="toggleTask(task)" />
-                    <span>{{ task.title }}</span>
-                  </label>
-                  <div class="task-meta">
-                    <small>🍅 {{ task.pomodoros }}</small>
-                    <button type="button" :disabled="taskSubmitting" @click="deleteTask(task)">删除</button>
-                  </div>
-                </article>
-              </div>
-            </section>
-          </section>
-
-          <section v-show="activePage === 'stats'" class="page page-stats" aria-label="统计">
-            <section class="stats-grid">
-              <article class="stat-card panel">
-                <span>今天</span>
-                <strong>{{ formatMinutes(stats.today_focus_seconds) }}</strong>
-                <small>{{ stats.today_sessions }} 场</small>
-              </article>
-              <article class="stat-card panel">
-                <span>总计</span>
-                <strong>{{ formatMinutes(stats.total_focus_seconds) }}</strong>
-                <small>{{ stats.total_sessions }} 场</small>
-              </article>
-              <article class="stat-card panel">
-                <span>番茄</span>
-                <strong>{{ pomodoro.completed }} 个</strong>
-                <small>{{ settings.pomodoro_minutes }} 分钟 / 个</small>
-              </article>
-            </section>
-
-            <section class="panel history-panel">
-              <div class="section-head">
-                <h2>最近记录</h2>
-                <small>{{ recentSessions.length ? `最近 ${recentSessions.length} 场` : "暂无记录" }}</small>
-              </div>
-              <div v-if="!recentSessions.length" class="empty-state">还没有专注记录。</div>
-              <div v-else class="history-list">
-                <article v-for="item in recentSessions" :key="item.ended_at" class="history-item">
-                  <strong>{{ formatMinutes(item.duration_seconds) }}</strong>
-                  <span>{{ formatDateRange(item) }}</span>
-                </article>
-              </div>
-            </section>
-          </section>
-
-          <section v-show="activePage === 'settings'" class="page page-settings" aria-label="设置">
-            <section class="panel settings-panel">
-              <div class="section-head">
-                <h2>设置</h2>
-                <small>{{ settingsSummary }}</small>
-              </div>
-              <form class="settings-form" @submit.prevent="saveSettings">
-                <label class="field inline-field">
-                  <span>默认时长</span>
-                  <input v-model.number="form.sessionMinutes" type="number" min="5" max="240" @input="settingsDirty = true" />
-                  <em>分钟</em>
-                </label>
-                <label class="field inline-field">
-                  <span>番茄钟</span>
-                  <input v-model.number="form.pomodoroMinutes" type="number" min="5" max="120" @input="settingsDirty = true" />
-                  <em>分钟</em>
-                </label>
-                <label class="field inline-field">
-                  <span>短休息</span>
-                  <input v-model.number="form.shortBreakMinutes" type="number" min="1" max="60" @input="settingsDirty = true" />
-                  <em>分钟</em>
-                </label>
-                <label class="field inline-field">
-                  <span>长休息</span>
-                  <input v-model.number="form.longBreakMinutes" type="number" min="1" max="90" @input="settingsDirty = true" />
-                  <em>分钟</em>
-                </label>
-                <label class="field inline-field">
-                  <span>长休息间隔</span>
-                  <input v-model.number="form.longBreakEvery" type="number" min="2" max="12" @input="settingsDirty = true" />
-                  <em>个番茄</em>
-                </label>
-
-                <label class="field">
-                  <span>需要屏蔽的网站</span>
-                  <textarea
-                    v-model="form.blockedDomainsText"
-                    rows="7"
-                    placeholder="每行一个域名，例如：baidu.com"
-                    @input="settingsDirty = true"
-                  ></textarea>
-                </label>
-
-                <div class="form-actions">
-                  <button class="subtle-button" type="button" :disabled="syncing" @click="refreshState">
-                    {{ syncing ? "同步中" : "同步" }}
-                  </button>
-                  <button class="save-button" type="submit" :disabled="submitting">
-                    {{ submitting ? "保存中" : "保存" }}
-                  </button>
-                </div>
-              </form>
-            </section>
-          </section>
+          <focus-page v-show="activePage === 'focus'"></focus-page>
+          <tasks-page v-show="activePage === 'tasks'"></tasks-page>
+          <stats-page v-show="activePage === 'stats'"></stats-page>
+          <settings-page v-show="activePage === 'settings'"></settings-page>
         </main>
 
         <nav class="app-nav" aria-label="主导航">
@@ -207,6 +41,10 @@
     </div>
 
     <script src="/vendor/vue.global.prod.js"></script>
+    <script src="/components/focus-page.js"></script>
+    <script src="/components/tasks-page.js"></script>
+    <script src="/components/stats-page.js"></script>
+    <script src="/components/settings-page.js"></script>
     <script src="/app.js"></script>
   </body>
 </html>

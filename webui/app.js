@@ -1,4 +1,10 @@
 const app = Vue.createApp({
+  components: {
+    FocusPage: window.FocusPage,
+    TasksPage: window.TasksPage,
+    StatsPage: window.StatsPage,
+    SettingsPage: window.SettingsPage,
+  },
   data() {
     return {
       snapshot: {
