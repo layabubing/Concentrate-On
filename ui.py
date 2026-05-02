@@ -67,6 +67,10 @@ def sanitize_domain_list(raw_domains: list[str] | str | None) -> list[str]:
 class Settings:
     blocked_domains: list[str] = field(default_factory=lambda: ["baidu.com"])
     session_minutes: int = 45
+    pomodoro_minutes: int = 25
+    short_break_minutes: int = 5
+    long_break_minutes: int = 15
+    long_break_every: int = 4
 
 
 @dataclass
@@ -75,6 +79,8 @@ class SessionRecord:
     ended_at: str
     duration_seconds: int
     blocked_domains: list[str]
+    session_type: str = "focus"
+    task_id: str | None = None
 
 
 @dataclass
@@ -83,7 +89,18 @@ class ActiveSession:
     planned_minutes: int
     blocked_domains: list[str]
     blocking_active: bool
+    session_type: str = "focus"
+    task_id: str | None = None
     blocking_message: str | None = None
+
+
+@dataclass
+class TaskItem:
+    id: str
+    title: str
+    completed: bool = False
+    created_at: str = field(default_factory=now_iso)
+    pomodoros: int = 0
 
 
 @dataclass
@@ -91,6 +108,7 @@ class AppState:
     settings: Settings = field(default_factory=Settings)
     current_session: ActiveSession | None = None
     history: list[SessionRecord] = field(default_factory=list)
+    tasks: list[TaskItem] = field(default_factory=list)
 
 
 class StateStore:
@@ -103,11 +121,27 @@ class StateStore:
             return AppState()
 
         payload = json.loads(self.path.read_text(encoding="utf-8"))
-        settings = Settings(**payload.get("settings", {}))
+        settings_payload = payload.get("settings", {})
+        settings = Settings(
+            **{key: value for key, value in settings_payload.items() if key in Settings.__dataclass_fields__}
+        )
         current_payload = payload.get("current_session")
-        current_session = ActiveSession(**current_payload) if current_payload else None
-        history = [SessionRecord(**item) for item in payload.get("history", [])]
-        return AppState(settings=settings, current_session=current_session, history=history)
+        current_session = (
+            ActiveSession(
+                **{key: value for key, value in current_payload.items() if key in ActiveSession.__dataclass_fields__}
+            )
+            if current_payload
+            else None
+        )
+        history = [
+            SessionRecord(**{key: value for key, value in item.items() if key in SessionRecord.__dataclass_fields__})
+            for item in payload.get("history", [])
+        ]
+        tasks = [
+            TaskItem(**{key: value for key, value in item.items() if key in TaskItem.__dataclass_fields__})
+            for item in payload.get("tasks", [])
+        ]
+        return AppState(settings=settings, current_session=current_session, history=history, tasks=tasks)
 
     def save(self, state: AppState) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -115,6 +149,7 @@ class StateStore:
             "settings": asdict(state.settings),
             "current_session": asdict(state.current_session) if state.current_session else None,
             "history": [asdict(item) for item in state.history[-100:]],
+            "tasks": [asdict(item) for item in state.tasks],
         }
         self.path.write_text(
             json.dumps(serializable, ensure_ascii=False, indent=2),
@@ -138,32 +173,87 @@ class FocusService:
     def update_settings(self, payload: dict[str, Any]) -> dict[str, Any]:
         with self.lock:
             domains = payload.get("blocked_domains", self.state.settings.blocked_domains)
-            session_minutes = payload.get("session_minutes", self.state.settings.session_minutes)
-            session_minutes = max(5, min(int(session_minutes), 240))
+            session_minutes = self._clamp_minutes(payload.get("session_minutes", self.state.settings.session_minutes), 5, 240)
+            pomodoro_minutes = self._clamp_minutes(payload.get("pomodoro_minutes", self.state.settings.pomodoro_minutes), 5, 120)
+            short_break_minutes = self._clamp_minutes(payload.get("short_break_minutes", self.state.settings.short_break_minutes), 1, 60)
+            long_break_minutes = self._clamp_minutes(payload.get("long_break_minutes", self.state.settings.long_break_minutes), 1, 90)
+            long_break_every = max(2, min(int(payload.get("long_break_every", self.state.settings.long_break_every)), 12))
 
             self.state.settings = Settings(
                 blocked_domains=sanitize_domain_list(domains),
                 session_minutes=session_minutes,
+                pomodoro_minutes=pomodoro_minutes,
+                short_break_minutes=short_break_minutes,
+                long_break_minutes=long_break_minutes,
+                long_break_every=long_break_every,
             )
 
             if self.state.current_session is not None:
-                self.state.current_session.planned_minutes = session_minutes
-                self.state.current_session.blocked_domains = list(self.state.settings.blocked_domains)
+                current = self.state.current_session
+                if current.session_type == "pomodoro":
+                    current.planned_minutes = pomodoro_minutes
+                elif current.session_type == "short_break":
+                    current.planned_minutes = short_break_minutes
+                elif current.session_type == "long_break":
+                    current.planned_minutes = long_break_minutes
+                else:
+                    current.planned_minutes = session_minutes
+                current.blocked_domains = list(self.state.settings.blocked_domains)
                 self._refresh_blocking()
 
             self.store.save(self.state)
             return self._build_snapshot()
 
-    def start_focus(self) -> dict[str, Any]:
+    def add_task(self, payload: dict[str, Any]) -> dict[str, Any]:
+        with self.lock:
+            title = str(payload.get("title", "")).strip()
+            if title:
+                self.state.tasks.append(TaskItem(id=str(int(time.time() * 1000)), title=title))
+                self.store.save(self.state)
+            return self._build_snapshot()
+
+    def update_task(self, task_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        with self.lock:
+            task = self._find_task(task_id)
+            if task is not None:
+                if "title" in payload:
+                    title = str(payload.get("title", "")).strip()
+                    if title:
+                        task.title = title
+                if "completed" in payload:
+                    task.completed = bool(payload["completed"])
+                self.store.save(self.state)
+            return self._build_snapshot()
+
+    def delete_task(self, task_id: str) -> dict[str, Any]:
+        with self.lock:
+            self.state.tasks = [task for task in self.state.tasks if task.id != task_id]
+            if self.state.current_session and self.state.current_session.task_id == task_id:
+                self.state.current_session.task_id = None
+            self.store.save(self.state)
+            return self._build_snapshot()
+
+    def start_focus(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         with self.lock:
             if self.state.current_session is not None:
                 return self._build_snapshot()
 
+            payload = payload or {}
+            session_type = str(payload.get("session_type", "focus"))
+            if session_type not in {"focus", "pomodoro", "short_break", "long_break"}:
+                session_type = "focus"
+            task_id = str(payload.get("task_id") or "") or None
+            if task_id is not None and self._find_task(task_id) is None:
+                task_id = None
+            planned_minutes = self._planned_minutes_for(session_type)
+
             session = ActiveSession(
                 started_at=now_iso(),
-                planned_minutes=self.state.settings.session_minutes,
+                planned_minutes=planned_minutes,
                 blocked_domains=list(self.state.settings.blocked_domains),
                 blocking_active=False,
+                session_type=session_type,
+                task_id=task_id,
                 blocking_message=None,
             )
             self.state.current_session = session
@@ -186,8 +276,14 @@ class FocusService:
                     ended_at=ended_at.isoformat(timespec="seconds"),
                     duration_seconds=duration_seconds,
                     blocked_domains=list(session.blocked_domains),
+                    session_type=session.session_type,
+                    task_id=session.task_id,
                 )
             )
+            if session.session_type == "pomodoro" and session.task_id:
+                task = self._find_task(session.task_id)
+                if task is not None:
+                    task.pomodoros += 1
 
             self.state.current_session = None
             self._disable_blocking()
@@ -211,6 +307,8 @@ class FocusService:
                 ended_at=now_iso(),
                 duration_seconds=duration_seconds,
                 blocked_domains=list(session.blocked_domains),
+                session_type=session.session_type,
+                task_id=session.task_id,
             )
         )
         self.state.current_session = None
@@ -244,6 +342,21 @@ class FocusService:
         except Exception:
             pass
 
+    def _clamp_minutes(self, value: Any, minimum: int, maximum: int) -> int:
+        return max(minimum, min(int(value), maximum))
+
+    def _planned_minutes_for(self, session_type: str) -> int:
+        if session_type == "pomodoro":
+            return self.state.settings.pomodoro_minutes
+        if session_type == "short_break":
+            return self.state.settings.short_break_minutes
+        if session_type == "long_break":
+            return self.state.settings.long_break_minutes
+        return self.state.settings.session_minutes
+
+    def _find_task(self, task_id: str) -> TaskItem | None:
+        return next((task for task in self.state.tasks if task.id == task_id), None)
+
     def _build_snapshot(self) -> dict[str, Any]:
         current = self.state.current_session
         total_seconds = sum(item.duration_seconds for item in self.state.history)
@@ -255,9 +368,21 @@ class FocusService:
         ]
         blocker_status = self.blocker.status()
 
+        completed_pomodoros = sum(1 for item in self.state.history if item.session_type == "pomodoro")
+        next_break_type = (
+            "long_break"
+            if completed_pomodoros > 0 and completed_pomodoros % self.state.settings.long_break_every == 0
+            else "short_break"
+        )
+
         response: dict[str, Any] = {
             "settings": asdict(self.state.settings),
             "current_session": None,
+            "tasks": [asdict(item) for item in self.state.tasks],
+            "pomodoro": {
+                "completed": completed_pomodoros,
+                "next_break_type": next_break_type,
+            },
             "stats": {
                 "total_sessions": len(self.state.history),
                 "total_focus_seconds": total_seconds,
@@ -305,7 +430,7 @@ class ConcentrateRequestHandler(BaseHTTPRequestHandler):
         body = self._read_json_body()
 
         if parsed.path == "/api/focus/start":
-            self._send_json(self.server.service.start_focus())
+            self._send_json(self.server.service.start_focus(body))
             return
 
         if parsed.path == "/api/focus/stop":
@@ -314,6 +439,18 @@ class ConcentrateRequestHandler(BaseHTTPRequestHandler):
 
         if parsed.path == "/api/settings":
             self._send_json(self.server.service.update_settings(body))
+            return
+
+        if parsed.path == "/api/tasks":
+            self._send_json(self.server.service.add_task(body))
+            return
+
+        if parsed.path.startswith("/api/tasks/"):
+            task_id = parsed.path.rsplit("/", 1)[-1]
+            if body.get("_delete"):
+                self._send_json(self.server.service.delete_task(task_id))
+            else:
+                self._send_json(self.server.service.update_task(task_id, body))
             return
 
         self._send_json({"error": "Not found"}, status=HTTPStatus.NOT_FOUND)
@@ -406,7 +543,7 @@ def run_desktop_window(runtime: AppRuntime) -> bool:
         runtime.address,
         width=1320,
         height=900,
-        min_size=(1100, 760),
+        min_size=(800, 600),
     )
 
     print(f"桌面应用已启动：{runtime.address}")

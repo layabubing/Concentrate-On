@@ -5,8 +5,17 @@ const app = Vue.createApp({
         settings: {
           blocked_domains: [],
           session_minutes: 45,
+          pomodoro_minutes: 25,
+          short_break_minutes: 5,
+          long_break_minutes: 15,
+          long_break_every: 4,
         },
         current_session: null,
+        tasks: [],
+        pomodoro: {
+          completed: 0,
+          next_break_type: "short_break",
+        },
         stats: {
           total_sessions: 0,
           total_focus_seconds: 0,
@@ -21,12 +30,21 @@ const app = Vue.createApp({
       },
       navItems: [
         { key: "focus", label: "专注", icon: "◐" },
+        { key: "tasks", label: "任务", icon: "□" },
         { key: "stats", label: "统计", icon: "▦" },
         { key: "settings", label: "设置", icon: "◎" },
       ],
       activePage: "focus",
+      selectedTaskId: "",
+      newTaskTitle: "",
+      taskMessage: "",
+      taskSubmitting: false,
       form: {
         sessionMinutes: 45,
+        pomodoroMinutes: 25,
+        shortBreakMinutes: 5,
+        longBreakMinutes: 15,
+        longBreakEvery: 4,
         blockedDomainsText: "",
       },
       settingsDirty: false,
@@ -55,6 +73,26 @@ const app = Vue.createApp({
       return this.snapshot.current_session;
     },
 
+    tasks() {
+      return this.snapshot.tasks || [];
+    },
+
+    openTasks() {
+      return this.tasks.filter((task) => !task.completed);
+    },
+
+    doneTasks() {
+      return this.tasks.filter((task) => task.completed);
+    },
+
+    pomodoro() {
+      return this.snapshot.pomodoro || { completed: 0, next_break_type: "short_break" };
+    },
+
+    selectedTask() {
+      return this.tasks.find((task) => task.id === this.selectedTaskId) || null;
+    },
+
     recentSessions() {
       return this.snapshot.recent_sessions;
     },
@@ -63,13 +101,23 @@ const app = Vue.createApp({
       return Boolean(this.currentSession);
     },
 
+    isPomodoroSession() {
+      return this.currentSession?.session_type === "pomodoro";
+    },
+
     elapsedText() {
       return this.formatDuration(this.localElapsed);
     },
 
+    remainingText() {
+      const plannedSeconds = (this.currentSession?.planned_minutes || this.settings.session_minutes) * 60;
+      return this.formatDuration(Math.max(0, plannedSeconds - this.localElapsed));
+    },
+
     targetText() {
       const minutes = this.currentSession?.planned_minutes ?? this.settings.session_minutes;
-      return `目标 ${minutes} 分钟`;
+      const label = this.sessionTypeLabel(this.currentSession?.session_type || "focus");
+      return `${label} · ${minutes} 分钟`;
     },
 
     blockerLabel() {
@@ -85,27 +133,37 @@ const app = Vue.createApp({
 
     settingsSummary() {
       const count = this.settings.blocked_domains.length;
-      return `${this.settings.session_minutes} 分钟 · ${count ? `${count} 个网站` : "未设置屏蔽"}`;
+      return `${this.settings.session_minutes} 分钟 · 番茄 ${this.settings.pomodoro_minutes} 分钟 · ${count ? `${count} 个网站` : "未设置屏蔽"}`;
     },
 
     pageTitle() {
+      if (this.activePage === "tasks") {
+        return "任务";
+      }
       if (this.activePage === "stats") {
         return "统计";
       }
       if (this.activePage === "settings") {
         return "设置";
       }
-      return this.isFocusing ? "保持这一段安静" : "开始一段专注";
+      return this.isFocusing ? "进行中" : "专注";
     },
 
     pageNote() {
+      if (this.activePage === "tasks") {
+        return this.openTasks.length ? `${this.openTasks.length} 个待办` : "没有待办";
+      }
       if (this.activePage === "stats") {
-        return this.stats.total_sessions ? `累计 ${this.stats.total_sessions} 场` : "暂无累计记录";
+        return this.stats.total_sessions ? `共 ${this.stats.total_sessions} 场` : "暂无记录";
       }
       if (this.activePage === "settings") {
-        return this.settingsDirty ? "有未保存修改" : this.settingsSummary;
+        return this.settingsDirty ? "未保存" : this.settingsSummary;
       }
       return this.todaySummary;
+    },
+
+    nextBreakLabel() {
+      return this.pomodoro.next_break_type === "long_break" ? "长休息" : "短休息";
     },
 
     statusIsWarning() {
@@ -116,10 +174,16 @@ const app = Vue.createApp({
       if (this.currentSession?.blocking_message) {
         return this.currentSession.blocking_message;
       }
-      if (this.isFocusing) {
-        return "专注进行中。";
+      if (!this.isFocusing) {
+        return "按下开始，进入计时。";
       }
-      return "只保留必要操作，开始后自动计时并应用屏蔽设置。";
+      if (this.currentSession.session_type === "pomodoro") {
+        return this.selectedTask ? `正在做：${this.selectedTask.title}` : "番茄钟进行中。";
+      }
+      if (this.currentSession.session_type === "short_break" || this.currentSession.session_type === "long_break") {
+        return "休息中。";
+      }
+      return "正在计时。";
     },
   },
 
@@ -143,8 +207,17 @@ const app = Vue.createApp({
       this.snapshot = snapshot;
       this.localElapsed = snapshot.current_session ? snapshot.current_session.elapsed_seconds : 0;
 
+      if (!this.selectedTaskId && snapshot.tasks?.length) {
+        const firstOpenTask = snapshot.tasks.find((task) => !task.completed);
+        this.selectedTaskId = firstOpenTask?.id || "";
+      }
+
       if (!this.settingsDirty) {
         this.form.sessionMinutes = snapshot.settings.session_minutes;
+        this.form.pomodoroMinutes = snapshot.settings.pomodoro_minutes;
+        this.form.shortBreakMinutes = snapshot.settings.short_break_minutes;
+        this.form.longBreakMinutes = snapshot.settings.long_break_minutes;
+        this.form.longBreakEvery = snapshot.settings.long_break_every;
         this.form.blockedDomainsText = snapshot.settings.blocked_domains.join("\n");
       }
     },
@@ -162,10 +235,43 @@ const app = Vue.createApp({
     },
 
     async toggleFocus() {
+      if (this.isFocusing) {
+        await this.stopFocus();
+        return;
+      }
+      await this.startSession("focus");
+    },
+
+    async startPomodoro() {
+      await this.startSession("pomodoro", this.selectedTaskId || null);
+    },
+
+    async startBreak(type = this.pomodoro.next_break_type) {
+      await this.startSession(type);
+    },
+
+    async startSession(sessionType, taskId = null) {
       this.submitting = true;
       try {
-        const path = this.isFocusing ? "/api/focus/stop" : "/api/focus/start";
-        const snapshot = await this.request(path, { method: "POST" });
+        const snapshot = await this.request("/api/focus/start", {
+          method: "POST",
+          body: JSON.stringify({
+            session_type: sessionType,
+            task_id: taskId,
+          }),
+        });
+        this.applySnapshot(snapshot);
+      } catch (error) {
+        this.setSessionMessage(`操作失败：${error.message}`);
+      } finally {
+        this.submitting = false;
+      }
+    },
+
+    async stopFocus() {
+      this.submitting = true;
+      try {
+        const snapshot = await this.request("/api/focus/stop", { method: "POST" });
         this.applySnapshot(snapshot);
       } catch (error) {
         this.setSessionMessage(`操作失败：${error.message}`);
@@ -181,6 +287,10 @@ const app = Vue.createApp({
           method: "POST",
           body: JSON.stringify({
             session_minutes: Number(this.form.sessionMinutes),
+            pomodoro_minutes: Number(this.form.pomodoroMinutes),
+            short_break_minutes: Number(this.form.shortBreakMinutes),
+            long_break_minutes: Number(this.form.longBreakMinutes),
+            long_break_every: Number(this.form.longBreakEvery),
             blocked_domains: this.form.blockedDomainsText,
           }),
         });
@@ -193,10 +303,97 @@ const app = Vue.createApp({
       }
     },
 
+    selectPage(page) {
+      this.activePage = page;
+      if (page === "tasks") {
+        this.taskMessage = "";
+      }
+    },
+
+    async addTask() {
+      const title = this.newTaskTitle.trim();
+      if (!title || this.taskSubmitting) {
+        this.taskMessage = title ? "" : "先写一点任务内容。";
+        return;
+      }
+
+      this.taskSubmitting = true;
+      this.taskMessage = "";
+      try {
+        const snapshot = await this.request("/api/tasks", {
+          method: "POST",
+          body: JSON.stringify({ title }),
+        });
+        this.newTaskTitle = "";
+        this.applySnapshot(snapshot);
+        this.activePage = "tasks";
+      } catch (error) {
+        this.taskMessage = `添加失败：${error.message}`;
+      } finally {
+        this.taskSubmitting = false;
+      }
+    },
+
+    async toggleTask(task) {
+      if (this.taskSubmitting) {
+        return;
+      }
+
+      this.taskSubmitting = true;
+      this.taskMessage = "";
+      try {
+        const snapshot = await this.request(`/api/tasks/${task.id}`, {
+          method: "POST",
+          body: JSON.stringify({ completed: !task.completed }),
+        });
+        this.applySnapshot(snapshot);
+      } catch (error) {
+        this.taskMessage = `更新失败：${error.message}`;
+      } finally {
+        this.taskSubmitting = false;
+      }
+    },
+
+    async deleteTask(task) {
+      if (this.taskSubmitting) {
+        return;
+      }
+
+      this.taskSubmitting = true;
+      this.taskMessage = "";
+      try {
+        const snapshot = await this.request(`/api/tasks/${task.id}`, {
+          method: "POST",
+          body: JSON.stringify({ _delete: true }),
+        });
+        if (this.selectedTaskId === task.id) {
+          this.selectedTaskId = "";
+        }
+        this.applySnapshot(snapshot);
+      } catch (error) {
+        this.taskMessage = `删除失败：${error.message}`;
+      } finally {
+        this.taskSubmitting = false;
+      }
+    },
+
     setSessionMessage(message) {
       if (this.currentSession) {
         this.snapshot.current_session.blocking_message = message;
       }
+    },
+
+    sessionTypeLabel(type) {
+      if (type === "pomodoro") {
+        return "番茄钟";
+      }
+      if (type === "short_break") {
+        return "短休息";
+      }
+      if (type === "long_break") {
+        return "长休息";
+      }
+      return "专注";
     },
 
     formatDuration(totalSeconds) {
@@ -219,7 +416,7 @@ const app = Vue.createApp({
     formatDateRange(item) {
       const start = new Date(item.started_at);
       const end = new Date(item.ended_at);
-      return `${start.toLocaleString("zh-CN", {
+      return `${this.sessionTypeLabel(item.session_type)} · ${start.toLocaleString("zh-CN", {
         month: "numeric",
         day: "numeric",
         hour: "2-digit",

@@ -21,9 +21,9 @@
           <section v-show="activePage === 'focus'" class="page page-focus" aria-label="专注">
             <section class="focus-card" aria-labelledby="focus-title">
               <div class="timer-block">
-                <p id="focus-title" class="label">{{ isFocusing ? "已进行" : "准备中" }}</p>
-                <strong class="timer">{{ elapsedText }}</strong>
-                <p class="target">{{ targetText }}</p>
+                <p id="focus-title" class="label">{{ isFocusing ? sessionTypeLabel(currentSession.session_type) : "准备中" }}</p>
+                <strong class="timer">{{ isFocusing ? remainingText : elapsedText }}</strong>
+                <p class="target">{{ isFocusing ? `剩余 · ${targetText}` : targetText }}</p>
               </div>
 
               <button class="main-action" :class="{ active: isFocusing }" :disabled="submitting" @click="toggleFocus">
@@ -31,6 +31,23 @@
               </button>
 
               <p class="message" :class="{ warning: statusIsWarning }">{{ statusMessage }}</p>
+            </section>
+
+            <section class="pomodoro-card panel">
+              <div class="section-head compact-head">
+                <div>
+                  <h2>番茄钟</h2>
+                  <small>已完成 {{ pomodoro.completed }} 个，下一次休息：{{ nextBreakLabel }}</small>
+                </div>
+              </div>
+              <div class="pomodoro-actions">
+                <select v-model="selectedTaskId" :disabled="isFocusing">
+                  <option value="">不关联任务</option>
+                  <option v-for="task in openTasks" :key="task.id" :value="task.id">{{ task.title }}</option>
+                </select>
+                <button class="save-button" type="button" :disabled="submitting || isFocusing" @click="startPomodoro">开始番茄钟</button>
+                <button class="subtle-button" type="button" :disabled="submitting || isFocusing" @click="startBreak()">开始休息</button>
+              </div>
             </section>
 
             <section class="quick-status" aria-label="当前设置">
@@ -47,22 +64,58 @@
             </section>
           </section>
 
+          <section v-show="activePage === 'tasks'" class="page page-tasks" aria-label="任务">
+            <section class="panel task-panel">
+              <form class="task-form" @submit.prevent="addTask">
+                <input v-model="newTaskTitle" type="text" placeholder="添加一个任务" autocomplete="off" />
+                <button class="save-button" type="submit" :disabled="taskSubmitting">
+                  {{ taskSubmitting ? "添加中" : "添加" }}
+                </button>
+              </form>
+              <p v-if="taskMessage" class="task-message">{{ taskMessage }}</p>
+
+              <div v-if="!tasks.length" class="empty-state">还没有任务。</div>
+              <div v-else class="task-list">
+                <article v-for="task in openTasks" :key="task.id" class="task-item">
+                  <label>
+                    <input type="checkbox" :checked="task.completed" :disabled="taskSubmitting" @change="toggleTask(task)" />
+                    <span>{{ task.title }}</span>
+                  </label>
+                  <div class="task-meta">
+                    <small>🍅 {{ task.pomodoros }}</small>
+                    <button type="button" :disabled="taskSubmitting" @click="deleteTask(task)">删除</button>
+                  </div>
+                </article>
+                <article v-for="task in doneTasks" :key="task.id" class="task-item done">
+                  <label>
+                    <input type="checkbox" :checked="task.completed" :disabled="taskSubmitting" @change="toggleTask(task)" />
+                    <span>{{ task.title }}</span>
+                  </label>
+                  <div class="task-meta">
+                    <small>🍅 {{ task.pomodoros }}</small>
+                    <button type="button" :disabled="taskSubmitting" @click="deleteTask(task)">删除</button>
+                  </div>
+                </article>
+              </div>
+            </section>
+          </section>
+
           <section v-show="activePage === 'stats'" class="page page-stats" aria-label="统计">
             <section class="stats-grid">
               <article class="stat-card panel">
-                <span>今日专注</span>
+                <span>今天</span>
                 <strong>{{ formatMinutes(stats.today_focus_seconds) }}</strong>
                 <small>{{ stats.today_sessions }} 场</small>
               </article>
               <article class="stat-card panel">
-                <span>累计专注</span>
+                <span>总计</span>
                 <strong>{{ formatMinutes(stats.total_focus_seconds) }}</strong>
                 <small>{{ stats.total_sessions }} 场</small>
               </article>
               <article class="stat-card panel">
-                <span>默认时长</span>
-                <strong>{{ settings.session_minutes }} 分钟</strong>
-                <small>下一场专注会使用此时长</small>
+                <span>番茄</span>
+                <strong>{{ pomodoro.completed }} 个</strong>
+                <small>{{ settings.pomodoro_minutes }} 分钟 / 个</small>
               </article>
             </section>
 
@@ -84,7 +137,7 @@
           <section v-show="activePage === 'settings'" class="page page-settings" aria-label="设置">
             <section class="panel settings-panel">
               <div class="section-head">
-                <h2>专注设置</h2>
+                <h2>设置</h2>
                 <small>{{ settingsSummary }}</small>
               </div>
               <form class="settings-form" @submit.prevent="saveSettings">
@@ -92,6 +145,26 @@
                   <span>默认时长</span>
                   <input v-model.number="form.sessionMinutes" type="number" min="5" max="240" @input="settingsDirty = true" />
                   <em>分钟</em>
+                </label>
+                <label class="field inline-field">
+                  <span>番茄钟</span>
+                  <input v-model.number="form.pomodoroMinutes" type="number" min="5" max="120" @input="settingsDirty = true" />
+                  <em>分钟</em>
+                </label>
+                <label class="field inline-field">
+                  <span>短休息</span>
+                  <input v-model.number="form.shortBreakMinutes" type="number" min="1" max="60" @input="settingsDirty = true" />
+                  <em>分钟</em>
+                </label>
+                <label class="field inline-field">
+                  <span>长休息</span>
+                  <input v-model.number="form.longBreakMinutes" type="number" min="1" max="90" @input="settingsDirty = true" />
+                  <em>分钟</em>
+                </label>
+                <label class="field inline-field">
+                  <span>长休息间隔</span>
+                  <input v-model.number="form.longBreakEvery" type="number" min="2" max="12" @input="settingsDirty = true" />
+                  <em>个番茄</em>
                 </label>
 
                 <label class="field">
@@ -124,7 +197,7 @@
             class="nav-item"
             :class="{ active: activePage === item.key }"
             type="button"
-            @click="activePage = item.key"
+            @click="selectPage(item.key)"
           >
             <span class="nav-icon">{{ item.icon }}</span>
             <span>{{ item.label }}</span>

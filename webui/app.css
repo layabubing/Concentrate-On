@@ -117,7 +117,7 @@ h2 {
 }
 
 .page {
-  animation: page-in 180ms ease both;
+  animation: page-in 240ms ease both;
 }
 
 .panel,
@@ -133,9 +133,9 @@ h2 {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 1.5rem;
-  min-height: 19rem;
-  padding: clamp(1.4rem, 5vw, 2.2rem);
+  gap: clamp(1.2rem, 4vw, 2.2rem);
+  min-height: 20.5rem;
+  padding: clamp(1.5rem, 5vw, 2.4rem);
 }
 
 .timer-block {
@@ -167,23 +167,29 @@ h2 {
 }
 
 .main-action {
-  width: 7.5rem;
-  height: 7.5rem;
-  border: 1px solid rgba(139, 94, 60, 0.22);
+  width: clamp(9rem, 18vw, 11rem);
+  height: clamp(9rem, 18vw, 11rem);
+  border: 1px solid rgba(139, 94, 60, 0.2);
   border-radius: 999px;
   color: #fffaf4;
   background: var(--accent);
-  box-shadow: 0 16px 36px rgba(139, 94, 60, 0.18);
-  transition: transform 180ms ease, background 180ms ease, box-shadow 180ms ease, opacity 180ms ease;
+  box-shadow: 0 18px 42px rgba(139, 94, 60, 0.18);
+  font-size: 1.18rem;
+  transition: transform 220ms ease, background 220ms ease, box-shadow 220ms ease, opacity 180ms ease;
 }
 
 .main-action.active {
   background: var(--green);
-  box-shadow: 0 16px 36px rgba(66, 121, 103, 0.18);
+  box-shadow: 0 18px 42px rgba(66, 121, 103, 0.18);
+  animation: focus-breathe 2.8s ease-in-out infinite;
 }
 
 .main-action:hover {
-  transform: translateY(-2px);
+  transform: translateY(-3px) scale(1.015);
+}
+
+.main-action:active {
+  transform: translateY(0) scale(0.98);
 }
 
 .main-action:disabled,
@@ -242,7 +248,8 @@ h2 {
 
 .quiet-card small,
 .stat-card small,
-.section-head small {
+.section-head small,
+.task-meta small {
   display: block;
   line-height: 1.45;
 }
@@ -256,7 +263,9 @@ h2 {
 }
 
 .history-panel,
-.settings-panel {
+.settings-panel,
+.pomodoro-card,
+.task-panel {
   margin-top: 0.9rem;
   overflow: hidden;
 }
@@ -267,6 +276,7 @@ h2 {
 
 .settings-form,
 .history-list,
+.task-list,
 .empty-state {
   border-top: 1px solid var(--line);
 }
@@ -288,7 +298,9 @@ h2 {
 }
 
 .field input,
-.field textarea {
+.field textarea,
+.task-form input,
+.pomodoro-actions select {
   width: 100%;
   border: 1px solid var(--line);
   border-radius: 16px;
@@ -299,7 +311,9 @@ h2 {
 }
 
 .field input:focus,
-.field textarea:focus {
+.field textarea:focus,
+.task-form input:focus,
+.pomodoro-actions select:focus {
   outline: 2px solid rgba(139, 94, 60, 0.12);
   border-color: rgba(139, 94, 60, 0.3);
 }
@@ -309,10 +323,71 @@ h2 {
   font-style: normal;
 }
 
-.form-actions {
+.form-actions,
+.pomodoro-actions,
+.task-form {
   display: flex;
   justify-content: flex-end;
   gap: 0.7rem;
+}
+
+.compact-head {
+  padding-bottom: 0.2rem;
+}
+
+.pomodoro-actions,
+.task-form {
+  padding: 1rem 1.15rem 1.15rem;
+}
+
+.pomodoro-actions select,
+.task-form input {
+  flex: 1;
+}
+
+.task-list {
+  display: grid;
+}
+
+.task-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.9rem 1.15rem;
+}
+
+.task-item + .task-item {
+  border-top: 1px solid var(--line);
+}
+
+.task-item label {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  min-width: 0;
+}
+
+.task-item label span {
+  word-break: break-word;
+}
+
+.task-item.done label span {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.task-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  color: var(--muted);
+}
+
+.task-meta button {
+  border: none;
+  color: var(--muted);
+  background: transparent;
 }
 
 .save-button,
@@ -337,6 +412,13 @@ h2 {
 .save-button:hover,
 .subtle-button:hover {
   transform: translateY(-1px);
+}
+
+.task-message {
+  margin: 0;
+  padding: 0 1.15rem 1rem;
+  color: var(--warning);
+  font-size: 0.92rem;
 }
 
 .empty-state {
@@ -392,7 +474,7 @@ h2 {
   padding: 0.78rem 0.9rem;
   color: var(--muted);
   background: transparent;
-  transition: background 180ms ease, color 180ms ease, transform 180ms ease;
+  transition: background 220ms ease, color 220ms ease, transform 220ms ease;
 }
 
 .nav-item.active {
@@ -412,11 +494,23 @@ h2 {
 @keyframes page-in {
   from {
     opacity: 0;
-    transform: translateY(6px);
+    transform: translateY(8px);
   }
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes focus-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+    box-shadow: 0 18px 42px rgba(66, 121, 103, 0.18);
+  }
+  50% {
+    transform: scale(1.025);
+    box-shadow: 0 22px 52px rgba(66, 121, 103, 0.22);
   }
 }
 
@@ -480,12 +574,18 @@ h2 {
     width: 100%;
     height: auto;
     margin-top: 1.1rem;
-    padding: 0.95rem 1rem;
+    padding: 1.15rem 1rem;
   }
 
   .quick-status,
   .stats-grid {
     grid-template-columns: 1fr;
+  }
+
+  .pomodoro-actions,
+  .task-form,
+  .task-item {
+    display: grid;
   }
 
   .inline-field {
