@@ -19,6 +19,12 @@ const app = Vue.createApp({
           hosts_path: "",
         },
       },
+      navItems: [
+        { key: "focus", label: "专注", icon: "◐" },
+        { key: "stats", label: "统计", icon: "▦" },
+        { key: "settings", label: "设置", icon: "◎" },
+      ],
+      activePage: "focus",
       form: {
         sessionMinutes: 45,
         blockedDomainsText: "",
@@ -80,6 +86,26 @@ const app = Vue.createApp({
     settingsSummary() {
       const count = this.settings.blocked_domains.length;
       return `${this.settings.session_minutes} 分钟 · ${count ? `${count} 个网站` : "未设置屏蔽"}`;
+    },
+
+    pageTitle() {
+      if (this.activePage === "stats") {
+        return "统计";
+      }
+      if (this.activePage === "settings") {
+        return "设置";
+      }
+      return this.isFocusing ? "保持这一段安静" : "开始一段专注";
+    },
+
+    pageNote() {
+      if (this.activePage === "stats") {
+        return this.stats.total_sessions ? `累计 ${this.stats.total_sessions} 场` : "暂无累计记录";
+      }
+      if (this.activePage === "settings") {
+        return this.settingsDirty ? "有未保存修改" : this.settingsSummary;
+      }
+      return this.todaySummary;
     },
 
     statusIsWarning() {

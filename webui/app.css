@@ -61,10 +61,14 @@ button {
   cursor: pointer;
 }
 
+.app-frame {
+  min-height: 100vh;
+}
+
 .shell {
-  width: min(760px, calc(100% - 2rem));
+  width: min(820px, calc(100% - 2rem));
   margin: 0 auto;
-  padding: clamp(1.2rem, 4vw, 3rem) 0 2.5rem;
+  padding: clamp(1.2rem, 4vw, 3rem) 0 6.4rem;
 }
 
 .topbar {
@@ -78,6 +82,7 @@ button {
 .brand,
 .label,
 .quiet-card span,
+.stat-card span,
 .field span {
   margin: 0;
   color: var(--soft);
@@ -89,18 +94,30 @@ button {
   letter-spacing: 0.08em;
 }
 
-h1 {
+h1,
+h2 {
   margin: 0;
-  font-size: clamp(1.65rem, 4vw, 2.65rem);
   font-weight: 600;
   line-height: 1.18;
   letter-spacing: -0.04em;
+}
+
+h1 {
+  font-size: clamp(1.65rem, 4vw, 2.65rem);
+}
+
+h2 {
+  font-size: 1.18rem;
 }
 
 .top-note {
   margin: 0 0 0.14rem;
   color: var(--muted);
   white-space: nowrap;
+}
+
+.page {
+  animation: page-in 180ms ease both;
 }
 
 .panel,
@@ -138,7 +155,8 @@ h1 {
 .target,
 .message,
 .quiet-card small,
-.drawer small,
+.stat-card small,
+.section-head small,
 .history-item span,
 .empty-state {
   color: var(--muted);
@@ -186,61 +204,65 @@ h1 {
   color: var(--warning);
 }
 
-.quiet-grid {
+.quick-status,
+.stats-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.8rem;
-  margin: 0.9rem 0;
+  margin-top: 0.9rem;
 }
 
-.quiet-card {
+.quick-status {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.stats-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.quiet-card,
+.stat-card {
   padding: 1rem;
 }
 
-.quiet-card strong {
+.stat-card {
+  min-height: 8.5rem;
+}
+
+.quiet-card strong,
+.stat-card strong {
   display: block;
   margin: 0.4rem 0 0.15rem;
   font-size: 1.25rem;
   font-weight: 600;
 }
 
+.stat-card strong {
+  font-size: clamp(1.35rem, 4vw, 2rem);
+}
+
 .quiet-card small,
-.drawer small {
+.stat-card small,
+.section-head small {
   display: block;
   line-height: 1.45;
 }
 
-.drawer {
-  margin-top: 0.8rem;
-  overflow: hidden;
-}
-
-.drawer summary {
+.section-head {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: space-between;
   gap: 1rem;
   padding: 1rem 1.15rem;
-  list-style: none;
-  cursor: pointer;
 }
 
-.drawer summary::-webkit-details-marker {
-  display: none;
+.history-panel,
+.settings-panel {
+  margin-top: 0.9rem;
+  overflow: hidden;
 }
 
-.drawer summary span {
-  font-weight: 600;
-}
-
-.drawer summary::after {
-  content: "+";
-  color: var(--soft);
-  font-size: 1.2rem;
-}
-
-.drawer[open] summary::after {
-  content: "−";
+.settings-panel {
+  margin-top: 0;
 }
 
 .settings-form,
@@ -348,6 +370,100 @@ h1 {
   text-align: right;
 }
 
+.app-nav {
+  position: fixed;
+  z-index: 10;
+  display: flex;
+  gap: 0.35rem;
+  padding: 0.5rem;
+  border: 1px solid var(--line);
+  background: rgba(255, 253, 248, 0.9);
+  box-shadow: 0 14px 45px rgba(65, 45, 28, 0.12);
+  backdrop-filter: blur(16px);
+}
+
+.nav-item {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  border: none;
+  border-radius: 16px;
+  padding: 0.78rem 0.9rem;
+  color: var(--muted);
+  background: transparent;
+  transition: background 180ms ease, color 180ms ease, transform 180ms ease;
+}
+
+.nav-item.active {
+  color: var(--accent-dark);
+  background: var(--panel-soft);
+}
+
+.nav-item:hover {
+  transform: translateY(-1px);
+}
+
+.nav-icon {
+  font-size: 1rem;
+  line-height: 1;
+}
+
+@keyframes page-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (orientation: portrait) {
+  .app-nav {
+    left: max(1rem, env(safe-area-inset-left));
+    right: max(1rem, env(safe-area-inset-right));
+    bottom: max(1rem, env(safe-area-inset-bottom));
+    justify-content: space-between;
+    border-radius: 24px;
+  }
+
+  .nav-item {
+    flex: 1;
+  }
+}
+
+@media (orientation: landscape) {
+  .app-frame {
+    display: grid;
+    grid-template-columns: 6.2rem minmax(0, 1fr);
+  }
+
+  .shell {
+    grid-column: 2;
+    padding-bottom: 2.5rem;
+  }
+
+  .app-nav {
+    top: 50%;
+    left: 1rem;
+    flex-direction: column;
+    transform: translateY(-50%);
+    border-radius: 28px;
+  }
+
+  .nav-item {
+    min-width: 4.6rem;
+    flex-direction: column;
+    gap: 0.32rem;
+  }
+
+  .nav-item:hover {
+    transform: translateY(-1px) translateX(1px);
+  }
+}
+
 @media (max-width: 680px) {
   .topbar,
   .focus-card,
@@ -367,7 +483,8 @@ h1 {
     padding: 0.95rem 1rem;
   }
 
-  .quiet-grid {
+  .quick-status,
+  .stats-grid {
     grid-template-columns: 1fr;
   }
 

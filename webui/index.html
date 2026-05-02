@@ -8,94 +8,129 @@
   </head>
   <body>
     <div id="app" v-cloak>
-      <main class="shell" :class="{ focusing: isFocusing }">
-        <header class="topbar">
-          <div>
-            <p class="brand">ConcentrateOn</p>
-            <h1>{{ isFocusing ? "保持这一段安静" : "开始一段专注" }}</h1>
-          </div>
-          <p class="top-note">{{ todaySummary }}</p>
-        </header>
-
-        <section class="focus-card" aria-labelledby="focus-title">
-          <div class="timer-block">
-            <p id="focus-title" class="label">{{ isFocusing ? "已进行" : "准备中" }}</p>
-            <strong class="timer">{{ elapsedText }}</strong>
-            <p class="target">{{ targetText }}</p>
-          </div>
-
-          <button class="main-action" :class="{ active: isFocusing }" :disabled="submitting" @click="toggleFocus">
-            {{ isFocusing ? "结束" : "开始" }}
-          </button>
-
-          <p class="message" :class="{ warning: statusIsWarning }">{{ statusMessage }}</p>
-        </section>
-
-        <section class="quiet-grid" aria-label="概览">
-          <article class="quiet-card">
-            <span>今日</span>
-            <strong>{{ formatMinutes(stats.today_focus_seconds) }}</strong>
-            <small>{{ stats.today_sessions }} 场</small>
-          </article>
-          <article class="quiet-card">
-            <span>累计</span>
-            <strong>{{ formatMinutes(stats.total_focus_seconds) }}</strong>
-            <small>{{ stats.total_sessions }} 场</small>
-          </article>
-          <article class="quiet-card">
-            <span>屏蔽</span>
-            <strong>{{ settings.blocked_domains.length }} 个</strong>
-            <small>{{ blockerLabel }}</small>
-          </article>
-        </section>
-
-        <details class="drawer panel" :open="settingsDirty">
-          <summary>
-            <span>设置</span>
-            <small>{{ settingsSummary }}</small>
-          </summary>
-          <form class="settings-form" @submit.prevent="saveSettings">
-            <label class="field inline-field">
-              <span>默认时长</span>
-              <input v-model.number="form.sessionMinutes" type="number" min="5" max="240" @input="settingsDirty = true" />
-              <em>分钟</em>
-            </label>
-
-            <label class="field">
-              <span>需要屏蔽的网站</span>
-              <textarea
-                v-model="form.blockedDomainsText"
-                rows="5"
-                placeholder="每行一个域名，例如：baidu.com"
-                @input="settingsDirty = true"
-              ></textarea>
-            </label>
-
-            <div class="form-actions">
-              <button class="subtle-button" type="button" :disabled="syncing" @click="refreshState">
-                {{ syncing ? "同步中" : "同步" }}
-              </button>
-              <button class="save-button" type="submit" :disabled="submitting">
-                {{ submitting ? "保存中" : "保存" }}
-              </button>
+      <div class="app-frame" :class="{ focusing: isFocusing }">
+        <main class="shell">
+          <header class="topbar">
+            <div>
+              <p class="brand">ConcentrateOn</p>
+              <h1>{{ pageTitle }}</h1>
             </div>
-          </form>
-        </details>
+            <p class="top-note">{{ pageNote }}</p>
+          </header>
 
-        <details class="drawer panel">
-          <summary>
-            <span>最近记录</span>
-            <small>{{ recentSessions.length ? `最近 ${recentSessions.length} 场` : "暂无记录" }}</small>
-          </summary>
-          <div v-if="!recentSessions.length" class="empty-state">还没有专注记录。</div>
-          <div v-else class="history-list">
-            <article v-for="item in recentSessions" :key="item.ended_at" class="history-item">
-              <strong>{{ formatMinutes(item.duration_seconds) }}</strong>
-              <span>{{ formatDateRange(item) }}</span>
-            </article>
-          </div>
-        </details>
-      </main>
+          <section v-show="activePage === 'focus'" class="page page-focus" aria-label="专注">
+            <section class="focus-card" aria-labelledby="focus-title">
+              <div class="timer-block">
+                <p id="focus-title" class="label">{{ isFocusing ? "已进行" : "准备中" }}</p>
+                <strong class="timer">{{ elapsedText }}</strong>
+                <p class="target">{{ targetText }}</p>
+              </div>
+
+              <button class="main-action" :class="{ active: isFocusing }" :disabled="submitting" @click="toggleFocus">
+                {{ isFocusing ? "结束" : "开始" }}
+              </button>
+
+              <p class="message" :class="{ warning: statusIsWarning }">{{ statusMessage }}</p>
+            </section>
+
+            <section class="quick-status" aria-label="当前设置">
+              <article class="quiet-card">
+                <span>今日</span>
+                <strong>{{ formatMinutes(stats.today_focus_seconds) }}</strong>
+                <small>{{ stats.today_sessions }} 场</small>
+              </article>
+              <article class="quiet-card">
+                <span>屏蔽</span>
+                <strong>{{ settings.blocked_domains.length }} 个</strong>
+                <small>{{ blockerLabel }}</small>
+              </article>
+            </section>
+          </section>
+
+          <section v-show="activePage === 'stats'" class="page page-stats" aria-label="统计">
+            <section class="stats-grid">
+              <article class="stat-card panel">
+                <span>今日专注</span>
+                <strong>{{ formatMinutes(stats.today_focus_seconds) }}</strong>
+                <small>{{ stats.today_sessions }} 场</small>
+              </article>
+              <article class="stat-card panel">
+                <span>累计专注</span>
+                <strong>{{ formatMinutes(stats.total_focus_seconds) }}</strong>
+                <small>{{ stats.total_sessions }} 场</small>
+              </article>
+              <article class="stat-card panel">
+                <span>默认时长</span>
+                <strong>{{ settings.session_minutes }} 分钟</strong>
+                <small>下一场专注会使用此时长</small>
+              </article>
+            </section>
+
+            <section class="panel history-panel">
+              <div class="section-head">
+                <h2>最近记录</h2>
+                <small>{{ recentSessions.length ? `最近 ${recentSessions.length} 场` : "暂无记录" }}</small>
+              </div>
+              <div v-if="!recentSessions.length" class="empty-state">还没有专注记录。</div>
+              <div v-else class="history-list">
+                <article v-for="item in recentSessions" :key="item.ended_at" class="history-item">
+                  <strong>{{ formatMinutes(item.duration_seconds) }}</strong>
+                  <span>{{ formatDateRange(item) }}</span>
+                </article>
+              </div>
+            </section>
+          </section>
+
+          <section v-show="activePage === 'settings'" class="page page-settings" aria-label="设置">
+            <section class="panel settings-panel">
+              <div class="section-head">
+                <h2>专注设置</h2>
+                <small>{{ settingsSummary }}</small>
+              </div>
+              <form class="settings-form" @submit.prevent="saveSettings">
+                <label class="field inline-field">
+                  <span>默认时长</span>
+                  <input v-model.number="form.sessionMinutes" type="number" min="5" max="240" @input="settingsDirty = true" />
+                  <em>分钟</em>
+                </label>
+
+                <label class="field">
+                  <span>需要屏蔽的网站</span>
+                  <textarea
+                    v-model="form.blockedDomainsText"
+                    rows="7"
+                    placeholder="每行一个域名，例如：baidu.com"
+                    @input="settingsDirty = true"
+                  ></textarea>
+                </label>
+
+                <div class="form-actions">
+                  <button class="subtle-button" type="button" :disabled="syncing" @click="refreshState">
+                    {{ syncing ? "同步中" : "同步" }}
+                  </button>
+                  <button class="save-button" type="submit" :disabled="submitting">
+                    {{ submitting ? "保存中" : "保存" }}
+                  </button>
+                </div>
+              </form>
+            </section>
+          </section>
+        </main>
+
+        <nav class="app-nav" aria-label="主导航">
+          <button
+            v-for="item in navItems"
+            :key="item.key"
+            class="nav-item"
+            :class="{ active: activePage === item.key }"
+            type="button"
+            @click="activePage = item.key"
+          >
+            <span class="nav-icon">{{ item.icon }}</span>
+            <span>{{ item.label }}</span>
+          </button>
+        </nav>
+      </div>
     </div>
 
     <script src="/vendor/vue.global.prod.js"></script>
