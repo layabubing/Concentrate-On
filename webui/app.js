@@ -23,7 +23,6 @@ const app = Vue.createApp({
         sessionMinutes: 45,
         blockedDomainsText: "",
       },
-      activePane: "settings",
       settingsDirty: false,
       submitting: false,
       syncing: false,
@@ -68,7 +67,23 @@ const app = Vue.createApp({
     },
 
     blockerLabel() {
-      return this.blocker.is_admin ? "已具备管理员权限" : "缺少管理员权限";
+      return this.blocker.is_admin ? "可用" : "需管理员权限";
+    },
+
+    todaySummary() {
+      if (this.stats.today_sessions === 0) {
+        return "今天还没有记录";
+      }
+      return `今天 ${this.formatMinutes(this.stats.today_focus_seconds)} · ${this.stats.today_sessions} 场`;
+    },
+
+    settingsSummary() {
+      const count = this.settings.blocked_domains.length;
+      return `${this.settings.session_minutes} 分钟 · ${count ? `${count} 个网站` : "未设置屏蔽"}`;
+    },
+
+    statusIsWarning() {
+      return Boolean(this.currentSession?.blocking_message) || !this.blocker.is_admin;
     },
 
     statusMessage() {
@@ -76,19 +91,9 @@ const app = Vue.createApp({
         return this.currentSession.blocking_message;
       }
       if (this.isFocusing) {
-        return "专注进行中，界面会持续和 Python 后端同步。";
+        return "专注进行中。";
       }
-      return "轻点开始按钮，进入下一段清晰、安静、不被打断的工作时间。";
-    },
-
-    ringStyle() {
-      const plannedMinutes = this.currentSession?.planned_minutes ?? this.settings.session_minutes;
-      const totalSeconds = Math.max(1, plannedMinutes * 60);
-      const progress = Math.min(this.localElapsed / totalSeconds, 1);
-      const degrees = Math.max(24, Math.round(progress * 360));
-      return {
-        "--progress": `${degrees}deg`,
-      };
+      return "只保留必要操作，开始后自动计时并应用屏蔽设置。";
     },
   },
 
@@ -116,10 +121,6 @@ const app = Vue.createApp({
         this.form.sessionMinutes = snapshot.settings.session_minutes;
         this.form.blockedDomainsText = snapshot.settings.blocked_domains.join("\n");
       }
-
-      if (!snapshot.current_session && this.activePane === "history" && snapshot.recent_sessions.length === 0) {
-        this.activePane = "settings";
-      }
     },
 
     async refreshState() {
@@ -128,9 +129,7 @@ const app = Vue.createApp({
         const snapshot = await this.request("/api/state");
         this.applySnapshot(snapshot);
       } catch (error) {
-        if (this.currentSession) {
-          this.snapshot.current_session.blocking_message = `状态同步失败：${error.message}`;
-        }
+        this.setSessionMessage(`状态同步失败：${error.message}`);
       } finally {
         this.syncing = false;
       }
@@ -142,13 +141,8 @@ const app = Vue.createApp({
         const path = this.isFocusing ? "/api/focus/stop" : "/api/focus/start";
         const snapshot = await this.request(path, { method: "POST" });
         this.applySnapshot(snapshot);
-        if (!this.isFocusing) {
-          this.activePane = "history";
-        }
       } catch (error) {
-        if (this.currentSession) {
-          this.snapshot.current_session.blocking_message = `操作失败：${error.message}`;
-        }
+        this.setSessionMessage(`操作失败：${error.message}`);
       } finally {
         this.submitting = false;
       }
@@ -167,20 +161,28 @@ const app = Vue.createApp({
         this.settingsDirty = false;
         this.applySnapshot(snapshot);
       } catch (error) {
-        if (this.currentSession) {
-          this.snapshot.current_session.blocking_message = `保存失败：${error.message}`;
-        }
+        this.setSessionMessage(`保存失败：${error.message}`);
       } finally {
         this.submitting = false;
       }
     },
 
+    setSessionMessage(message) {
+      if (this.currentSession) {
+        this.snapshot.current_session.blocking_message = message;
+      }
+    },
+
     formatDuration(totalSeconds) {
       const seconds = Math.max(0, Number(totalSeconds || 0));
-      const hours = String(Math.floor(seconds / 3600)).padStart(2, "0");
+      const hours = Math.floor(seconds / 3600);
       const minutes = String(Math.floor((seconds % 3600) / 60)).padStart(2, "0");
       const remaining = String(seconds % 60).padStart(2, "0");
-      return `${hours}:${minutes}:${remaining}`;
+
+      if (hours === 0) {
+        return `${minutes}:${remaining}`;
+      }
+      return `${String(hours).padStart(2, "0")}:${minutes}:${remaining}`;
     },
 
     formatMinutes(totalSeconds) {
