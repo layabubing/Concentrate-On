@@ -4,6 +4,22 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ConcentrateOn</title>
+    <script>
+      (() => {
+        try {
+          const themes = ["light", "dark"];
+          const colors = ["blue", "green", "red", "yellow"];
+          const personalization = JSON.parse(localStorage.getItem("concentrateon.personalization") || "{}");
+          if (themes.includes(personalization.themeMode)) {
+            document.documentElement.dataset.theme = personalization.themeMode;
+          }
+          if (colors.includes(personalization.colorScheme)) {
+            document.documentElement.dataset.color = personalization.colorScheme;
+          }
+        } catch {
+        }
+      })();
+    </script>
     <link rel="stylesheet" href="/app.css" />
   </head>
   <body>

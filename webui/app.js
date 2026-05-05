@@ -1,3 +1,21 @@
+const PERSONALIZATION_KEY = "concentrateon.personalization";
+const VALID_THEME_MODES = ["light", "dark"];
+const VALID_COLOR_SCHEMES = ["blue", "green", "red", "yellow"];
+const VALID_PAGES = ["focus", "tasks", "stats", "settings"];
+
+function readPersonalization() {
+  try {
+    return JSON.parse(window.localStorage.getItem(PERSONALIZATION_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+const storedPersonalization = readPersonalization();
+const storedThemeMode = VALID_THEME_MODES.includes(storedPersonalization.themeMode) ? storedPersonalization.themeMode : "light";
+const storedColorScheme = VALID_COLOR_SCHEMES.includes(storedPersonalization.colorScheme) ? storedPersonalization.colorScheme : "blue";
+const storedActivePage = VALID_PAGES.includes(storedPersonalization.activePage) ? storedPersonalization.activePage : "focus";
+
 const app = Vue.createApp({
   components: {
     FocusPage: window.FocusPage,
@@ -42,7 +60,7 @@ const app = Vue.createApp({
         { key: "stats", label: "统计", icon: "▦" },
         { key: "settings", label: "设置", icon: "◎" },
       ],
-      activePage: "focus",
+      activePage: storedActivePage,
       selectedTaskId: "",
       newTaskTitle: "",
       taskMessage: "",
@@ -55,8 +73,8 @@ const app = Vue.createApp({
         longBreakEvery: 4,
         blockedDomains: [],
         newBlockedDomain: "",
-        themeMode: "light",
-        colorScheme: "blue",
+        themeMode: storedThemeMode,
+        colorScheme: storedColorScheme,
       },
       themeOptions: [
         { value: "light", label: "浅色" },
@@ -225,6 +243,7 @@ const app = Vue.createApp({
     },
 
     applySnapshot(snapshot) {
+      const stored = readPersonalization();
       const normalizedSnapshot = {
         ...snapshot,
         settings: {
@@ -233,6 +252,16 @@ const app = Vue.createApp({
           ...snapshot.settings,
         },
       };
+
+      const rememberedTheme = VALID_THEME_MODES.includes(stored.themeMode)
+        ? stored.themeMode
+        : normalizedSnapshot.settings.theme_mode;
+      const rememberedColor = VALID_COLOR_SCHEMES.includes(stored.colorScheme)
+        ? stored.colorScheme
+        : normalizedSnapshot.settings.color_scheme;
+      normalizedSnapshot.settings.theme_mode = rememberedTheme;
+      normalizedSnapshot.settings.color_scheme = rememberedColor;
+
       this.snapshot = normalizedSnapshot;
       this.localElapsed = normalizedSnapshot.current_session ? normalizedSnapshot.current_session.elapsed_seconds : 0;
 
@@ -253,6 +282,10 @@ const app = Vue.createApp({
         this.form.colorScheme = normalizedSnapshot.settings.color_scheme;
       }
 
+      this.rememberPersonalization({
+        themeMode: this.form.themeMode,
+        colorScheme: this.form.colorScheme,
+      });
       this.applyTheme(this.form.themeMode, this.form.colorScheme);
     },
 
@@ -331,6 +364,10 @@ const app = Vue.createApp({
           }),
         });
         this.settingsDirty = false;
+        this.rememberPersonalization({
+          themeMode: this.form.themeMode,
+          colorScheme: this.form.colorScheme,
+        });
         this.applySnapshot(snapshot);
       } catch (error) {
         this.setSessionMessage(`保存失败：${error.message}`);
@@ -367,12 +404,29 @@ const app = Vue.createApp({
 
     updateAppearance() {
       this.settingsDirty = true;
+      this.rememberPersonalization({
+        themeMode: this.form.themeMode,
+        colorScheme: this.form.colorScheme,
+      });
       this.applyTheme(this.form.themeMode, this.form.colorScheme);
     },
 
+    rememberPersonalization(patch = {}) {
+      const current = readPersonalization();
+      const next = {
+        ...current,
+        ...patch,
+      };
+      try {
+        window.localStorage.setItem(PERSONALIZATION_KEY, JSON.stringify(next));
+      } catch {
+        // Local storage can be unavailable in restricted browser contexts.
+      }
+    },
+
     applyTheme(themeMode = "light", colorScheme = "blue") {
-      const theme = this.themeOptions.some((item) => item.value === themeMode) ? themeMode : "light";
-      const color = this.colorOptions.some((item) => item.value === colorScheme) ? colorScheme : "blue";
+      const theme = VALID_THEME_MODES.includes(themeMode) ? themeMode : "light";
+      const color = VALID_COLOR_SCHEMES.includes(colorScheme) ? colorScheme : "blue";
       document.documentElement.dataset.theme = theme;
       document.documentElement.dataset.color = color;
     },
@@ -386,7 +440,11 @@ const app = Vue.createApp({
     },
 
     selectPage(page) {
+      if (!VALID_PAGES.includes(page)) {
+        return;
+      }
       this.activePage = page;
+      this.rememberPersonalization({ activePage: page });
       if (page === "tasks") {
         this.taskMessage = "";
       }
@@ -512,6 +570,11 @@ const app = Vue.createApp({
 
   mounted() {
     this.applyTheme(this.form.themeMode, this.form.colorScheme);
+    this.rememberPersonalization({
+      activePage: this.activePage,
+      themeMode: this.form.themeMode,
+      colorScheme: this.form.colorScheme,
+    });
     this.refreshState();
     this.refreshTimer = window.setInterval(this.refreshState, 5000);
     this.tickTimer = window.setInterval(() => {
