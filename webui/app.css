@@ -1,16 +1,16 @@
 :root {
-  --bg: #f7f3ed;
-  --panel: #fffdf8;
-  --panel-soft: #fbf7f0;
-  --line: #e7ddd0;
-  --text: #241c15;
-  --muted: #776d63;
-  --soft: #9a9085;
-  --accent: #8b5e3c;
-  --accent-dark: #654226;
-  --green: #427967;
-  --warning: #9b563b;
-  --shadow: 0 18px 55px rgba(65, 45, 28, 0.08);
+  --bg: #f4f9ff;
+  --panel: #ffffff;
+  --panel-soft: #eef7ff;
+  --line: #d6e8f8;
+  --text: #163047;
+  --muted: #5f7890;
+  --soft: #88a4ba;
+  --accent: #64b5f6;
+  --accent-dark: #2f8fd8;
+  --green: #50bfa5;
+  --warning: #d46363;
+  --shadow: 0 18px 55px rgba(47, 143, 216, 0.1);
 }
 
 @font-face {
@@ -47,7 +47,7 @@ body {
 body {
   min-height: 100vh;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.72), transparent 34%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(235, 247, 255, 0.55) 44%, transparent 78%),
     var(--bg);
 }
 
@@ -169,18 +169,18 @@ h2 {
 .main-action {
   width: clamp(9rem, 18vw, 11rem);
   height: clamp(9rem, 18vw, 11rem);
-  border: 1px solid rgba(139, 94, 60, 0.2);
+  border: 1px solid rgba(100, 181, 246, 0.42);
   border-radius: 999px;
-  color: #fffaf4;
-  background: var(--accent);
-  box-shadow: 0 18px 42px rgba(139, 94, 60, 0.18);
+  color: #ffffff;
+  background: linear-gradient(135deg, var(--accent), var(--accent-dark));
+  box-shadow: 0 18px 42px rgba(47, 143, 216, 0.22);
   font-size: 1.18rem;
   transition: transform 220ms ease, background 220ms ease, box-shadow 220ms ease, opacity 180ms ease;
 }
 
 .main-action.active {
-  background: var(--green);
-  box-shadow: 0 18px 42px rgba(66, 121, 103, 0.18);
+  background: linear-gradient(135deg, #6ad9c2, var(--green));
+  box-shadow: 0 18px 42px rgba(80, 191, 165, 0.22);
   animation: focus-breathe 2.8s ease-in-out infinite;
 }
 
@@ -300,6 +300,7 @@ h2 {
 .field input,
 .field textarea,
 .task-form input,
+.domain-add-row input,
 .pomodoro-actions select {
   width: 100%;
   border: 1px solid var(--line);
@@ -313,9 +314,10 @@ h2 {
 .field input:focus,
 .field textarea:focus,
 .task-form input:focus,
+.domain-add-row input:focus,
 .pomodoro-actions select:focus {
-  outline: 2px solid rgba(139, 94, 60, 0.12);
-  border-color: rgba(139, 94, 60, 0.3);
+  outline: 2px solid rgba(100, 181, 246, 0.18);
+  border-color: rgba(47, 143, 216, 0.42);
 }
 
 .field em {
@@ -325,7 +327,8 @@ h2 {
 
 .form-actions,
 .pomodoro-actions,
-.task-form {
+.task-form,
+.domain-add-row {
   display: flex;
   justify-content: flex-end;
   gap: 0.7rem;
@@ -341,8 +344,51 @@ h2 {
 }
 
 .pomodoro-actions select,
-.task-form input {
+.task-form input,
+.domain-add-row input {
   flex: 1;
+}
+
+.domain-field {
+  gap: 0.75rem;
+}
+
+.domain-add-row {
+  align-items: center;
+}
+
+.domain-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.domain-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  max-width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.45rem 0.5rem 0.45rem 0.75rem;
+  color: var(--text);
+  background: var(--panel-soft);
+  word-break: break-word;
+}
+
+.domain-chip button {
+  width: 1.45rem;
+  height: 1.45rem;
+  border: none;
+  border-radius: 999px;
+  color: var(--muted);
+  background: rgba(100, 181, 246, 0.14);
+  line-height: 1;
+}
+
+.domain-empty {
+  color: var(--muted);
+  font-size: 0.92rem;
 }
 
 .task-list {
@@ -399,8 +445,8 @@ h2 {
 }
 
 .save-button {
-  color: #fffaf4;
-  background: var(--accent-dark);
+  color: #ffffff;
+  background: linear-gradient(135deg, var(--accent), var(--accent-dark));
   border-color: var(--accent-dark);
 }
 
@@ -459,8 +505,8 @@ h2 {
   gap: 0.35rem;
   padding: 0.5rem;
   border: 1px solid var(--line);
-  background: rgba(255, 253, 248, 0.9);
-  box-shadow: 0 14px 45px rgba(65, 45, 28, 0.12);
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 14px 45px rgba(47, 143, 216, 0.14);
   backdrop-filter: blur(16px);
 }
 
@@ -506,11 +552,11 @@ h2 {
   0%,
   100% {
     transform: scale(1);
-    box-shadow: 0 18px 42px rgba(66, 121, 103, 0.18);
+    box-shadow: 0 18px 42px rgba(80, 191, 165, 0.22);
   }
   50% {
     transform: scale(1.025);
-    box-shadow: 0 22px 52px rgba(66, 121, 103, 0.22);
+    box-shadow: 0 22px 52px rgba(80, 191, 165, 0.26);
   }
 }
 

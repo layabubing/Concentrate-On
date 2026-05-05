@@ -33,15 +33,27 @@ window.SettingsPage = {
             <em>个番茄</em>
           </label>
 
-          <label class="field">
+          <section class="field domain-field" aria-label="需要屏蔽的网站">
             <span>需要屏蔽的网站</span>
-            <textarea
-              v-model="$root.form.blockedDomainsText"
-              rows="7"
-              placeholder="每行一个域名，例如：baidu.com"
-              @input="$root.settingsDirty = true"
-            ></textarea>
-          </label>
+            <div class="domain-add-row">
+              <input
+                v-model="$root.form.newBlockedDomain"
+                type="text"
+                placeholder="输入域名，例如：baidu.com"
+                autocomplete="off"
+                @keydown.enter.prevent="$root.addBlockedDomain"
+              />
+              <button class="subtle-button" type="button" @click="$root.addBlockedDomain">添加</button>
+            </div>
+
+            <div v-if="!$root.form.blockedDomains.length" class="domain-empty">还没有添加网站。</div>
+            <div v-else class="domain-list">
+              <span v-for="domain in $root.form.blockedDomains" :key="domain" class="domain-chip">
+                {{ domain }}
+                <button type="button" aria-label="移除网站" @click="$root.removeBlockedDomain(domain)">×</button>
+              </span>
+            </div>
+          </section>
 
           <div class="form-actions">
             <button class="subtle-button" type="button" :disabled="$root.syncing" @click="$root.refreshState">

@@ -51,7 +51,8 @@ const app = Vue.createApp({
         shortBreakMinutes: 5,
         longBreakMinutes: 15,
         longBreakEvery: 4,
-        blockedDomainsText: "",
+        blockedDomains: [],
+        newBlockedDomain: "",
       },
       settingsDirty: false,
       submitting: false,
@@ -224,7 +225,8 @@ const app = Vue.createApp({
         this.form.shortBreakMinutes = snapshot.settings.short_break_minutes;
         this.form.longBreakMinutes = snapshot.settings.long_break_minutes;
         this.form.longBreakEvery = snapshot.settings.long_break_every;
-        this.form.blockedDomainsText = snapshot.settings.blocked_domains.join("\n");
+        this.form.blockedDomains = [...snapshot.settings.blocked_domains];
+        this.form.newBlockedDomain = "";
       }
     },
 
@@ -297,7 +299,7 @@ const app = Vue.createApp({
             short_break_minutes: Number(this.form.shortBreakMinutes),
             long_break_minutes: Number(this.form.longBreakMinutes),
             long_break_every: Number(this.form.longBreakEvery),
-            blocked_domains: this.form.blockedDomainsText,
+            blocked_domains: this.form.blockedDomains,
           }),
         });
         this.settingsDirty = false;
@@ -307,6 +309,22 @@ const app = Vue.createApp({
       } finally {
         this.submitting = false;
       }
+    },
+
+    addBlockedDomain() {
+      const domain = this.form.newBlockedDomain.trim().toLowerCase();
+      if (!domain || this.form.blockedDomains.includes(domain)) {
+        this.form.newBlockedDomain = "";
+        return;
+      }
+      this.form.blockedDomains.push(domain);
+      this.form.newBlockedDomain = "";
+      this.settingsDirty = true;
+    },
+
+    removeBlockedDomain(domain) {
+      this.form.blockedDomains = this.form.blockedDomains.filter((item) => item !== domain);
+      this.settingsDirty = true;
     },
 
     selectPage(page) {
