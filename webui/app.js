@@ -88,10 +88,13 @@ const app = Vue.createApp({
       ],
       settingsDirty: false,
       submitting: false,
+      settingsSubmitting: false,
+      settingsSaveStatus: "saved",
       syncing: false,
       localElapsed: 0,
       refreshTimer: null,
       tickTimer: null,
+      settingsSaveTimer: null,
     };
   },
 
@@ -175,6 +178,19 @@ const app = Vue.createApp({
       return `${this.settings.session_minutes} 分钟 · ${this.themeModeLabel(this.settings.theme_mode)} · ${this.colorSchemeLabel(this.settings.color_scheme)} · ${count ? `${count} 个网站` : "未设置屏蔽"}`;
     },
 
+    settingsStatusText() {
+      if (this.settingsSaveStatus === "saving" || this.settingsSubmitting) {
+        return "正在自动保存";
+      }
+      if (this.settingsSaveStatus === "pending") {
+        return "即将自动保存";
+      }
+      if (this.settingsSaveStatus === "error") {
+        return "自动保存失败";
+      }
+      return "已自动保存";
+    },
+
     pageTitle() {
       if (this.activePage === "tasks") {
         return "任务";
@@ -196,7 +212,7 @@ const app = Vue.createApp({
         return this.stats.total_sessions ? `共 ${this.stats.total_sessions} 场` : "暂无记录";
       }
       if (this.activePage === "settings") {
-        return this.settingsDirty ? "未保存" : this.settingsSummary;
+        return this.settingsDirty ? this.settingsStatusText : this.settingsSummary;
       }
       return this.todaySummary;
     },
@@ -243,7 +259,6 @@ const app = Vue.createApp({
     },
 
     applySnapshot(snapshot) {
-      const stored = readPersonalization();
       const normalizedSnapshot = {
         ...snapshot,
         settings: {
@@ -252,15 +267,6 @@ const app = Vue.createApp({
           ...snapshot.settings,
         },
       };
-
-      const rememberedTheme = VALID_THEME_MODES.includes(stored.themeMode)
-        ? stored.themeMode
-        : normalizedSnapshot.settings.theme_mode;
-      const rememberedColor = VALID_COLOR_SCHEMES.includes(stored.colorScheme)
-        ? stored.colorScheme
-        : normalizedSnapshot.settings.color_scheme;
-      normalizedSnapshot.settings.theme_mode = rememberedTheme;
-      normalizedSnapshot.settings.color_scheme = rememberedColor;
 
       this.snapshot = normalizedSnapshot;
       this.localElapsed = normalizedSnapshot.current_session ? normalizedSnapshot.current_session.elapsed_seconds : 0;
@@ -348,32 +354,46 @@ const app = Vue.createApp({
     },
 
     async saveSettings() {
-      this.submitting = true;
+      if (this.settingsSaveTimer) {
+        window.clearTimeout(this.settingsSaveTimer);
+        this.settingsSaveTimer = null;
+      }
+
+      this.settingsSubmitting = true;
+      this.settingsSaveStatus = "saving";
       try {
         const snapshot = await this.request("/api/settings", {
           method: "POST",
-          body: JSON.stringify({
-            session_minutes: Number(this.form.sessionMinutes),
-            pomodoro_minutes: Number(this.form.pomodoroMinutes),
-            short_break_minutes: Number(this.form.shortBreakMinutes),
-            long_break_minutes: Number(this.form.longBreakMinutes),
-            long_break_every: Number(this.form.longBreakEvery),
-            blocked_domains: this.form.blockedDomains,
-            theme_mode: this.form.themeMode,
-            color_scheme: this.form.colorScheme,
-          }),
+          body: JSON.stringify(this.buildSettingsPayload()),
         });
         this.settingsDirty = false;
+        this.settingsSaveStatus = "saved";
         this.rememberPersonalization({
           themeMode: this.form.themeMode,
           colorScheme: this.form.colorScheme,
         });
         this.applySnapshot(snapshot);
       } catch (error) {
+        this.settingsSaveStatus = "error";
         this.setSessionMessage(`保存失败：${error.message}`);
       } finally {
-        this.submitting = false;
+        this.settingsSubmitting = false;
       }
+    },
+
+    scheduleSettingsSave(delay = 650) {
+      this.settingsDirty = true;
+      this.settingsSaveStatus = "pending";
+      if (this.settingsSaveTimer) {
+        window.clearTimeout(this.settingsSaveTimer);
+      }
+      this.settingsSaveTimer = window.setTimeout(() => {
+        this.saveSettings();
+      }, delay);
+    },
+
+    markSettingsChanged() {
+      this.scheduleSettingsSave();
     },
 
     addBlockedDomain() {
@@ -384,12 +404,12 @@ const app = Vue.createApp({
       }
       this.form.blockedDomains.push(domain);
       this.form.newBlockedDomain = "";
-      this.settingsDirty = true;
+      this.scheduleSettingsSave(120);
     },
 
     removeBlockedDomain(domain) {
       this.form.blockedDomains = this.form.blockedDomains.filter((item) => item !== domain);
-      this.settingsDirty = true;
+      this.scheduleSettingsSave(120);
     },
 
     selectThemeMode(value) {
@@ -403,12 +423,12 @@ const app = Vue.createApp({
     },
 
     updateAppearance() {
-      this.settingsDirty = true;
       this.rememberPersonalization({
         themeMode: this.form.themeMode,
         colorScheme: this.form.colorScheme,
       });
       this.applyTheme(this.form.themeMode, this.form.colorScheme);
+      this.scheduleSettingsSave(180);
     },
 
     rememberPersonalization(patch = {}) {
@@ -422,6 +442,43 @@ const app = Vue.createApp({
       } catch {
         // Local storage can be unavailable in restricted browser contexts.
       }
+    },
+
+    buildSettingsPayload() {
+      return {
+        session_minutes: Number(this.form.sessionMinutes),
+        pomodoro_minutes: Number(this.form.pomodoroMinutes),
+        short_break_minutes: Number(this.form.shortBreakMinutes),
+        long_break_minutes: Number(this.form.longBreakMinutes),
+        long_break_every: Number(this.form.longBreakEvery),
+        blocked_domains: this.form.blockedDomains,
+        theme_mode: this.form.themeMode,
+        color_scheme: this.form.colorScheme,
+      };
+    },
+
+    flushSettingsBeforeUnload() {
+      if (!this.settingsDirty && !this.settingsSaveTimer) {
+        return;
+      }
+      if (this.settingsSaveTimer) {
+        window.clearTimeout(this.settingsSaveTimer);
+        this.settingsSaveTimer = null;
+      }
+
+      const body = JSON.stringify(this.buildSettingsPayload());
+      if (navigator.sendBeacon) {
+        const blob = new Blob([body], { type: "application/json" });
+        navigator.sendBeacon("/api/settings", blob);
+        return;
+      }
+
+      fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+        keepalive: true,
+      }).catch(() => {});
     },
 
     applyTheme(themeMode = "light", colorScheme = "blue") {
@@ -570,11 +627,8 @@ const app = Vue.createApp({
 
   mounted() {
     this.applyTheme(this.form.themeMode, this.form.colorScheme);
-    this.rememberPersonalization({
-      activePage: this.activePage,
-      themeMode: this.form.themeMode,
-      colorScheme: this.form.colorScheme,
-    });
+    this.rememberPersonalization({ activePage: this.activePage });
+    window.addEventListener("beforeunload", this.flushSettingsBeforeUnload);
     this.refreshState();
     this.refreshTimer = window.setInterval(this.refreshState, 5000);
     this.tickTimer = window.setInterval(() => {
@@ -585,11 +639,15 @@ const app = Vue.createApp({
   },
 
   beforeUnmount() {
+    window.removeEventListener("beforeunload", this.flushSettingsBeforeUnload);
     if (this.refreshTimer) {
       window.clearInterval(this.refreshTimer);
     }
     if (this.tickTimer) {
       window.clearInterval(this.tickTimer);
+    }
+    if (this.settingsSaveTimer) {
+      window.clearTimeout(this.settingsSaveTimer);
     }
   },
 });
