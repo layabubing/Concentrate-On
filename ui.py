@@ -71,6 +71,8 @@ class Settings:
     short_break_minutes: int = 5
     long_break_minutes: int = 15
     long_break_every: int = 4
+    theme_mode: str = "light"
+    color_scheme: str = "blue"
 
 
 @dataclass
@@ -178,6 +180,8 @@ class FocusService:
             short_break_minutes = self._clamp_minutes(payload.get("short_break_minutes", self.state.settings.short_break_minutes), 1, 60)
             long_break_minutes = self._clamp_minutes(payload.get("long_break_minutes", self.state.settings.long_break_minutes), 1, 90)
             long_break_every = max(2, min(int(payload.get("long_break_every", self.state.settings.long_break_every)), 12))
+            theme_mode = self._normalize_theme_mode(payload.get("theme_mode", self.state.settings.theme_mode))
+            color_scheme = self._normalize_color_scheme(payload.get("color_scheme", self.state.settings.color_scheme))
 
             self.state.settings = Settings(
                 blocked_domains=sanitize_domain_list(domains),
@@ -186,6 +190,8 @@ class FocusService:
                 short_break_minutes=short_break_minutes,
                 long_break_minutes=long_break_minutes,
                 long_break_every=long_break_every,
+                theme_mode=theme_mode,
+                color_scheme=color_scheme,
             )
 
             if self.state.current_session is not None:
@@ -344,6 +350,14 @@ class FocusService:
 
     def _clamp_minutes(self, value: Any, minimum: int, maximum: int) -> int:
         return max(minimum, min(int(value), maximum))
+
+    def _normalize_theme_mode(self, value: Any) -> str:
+        theme_mode = str(value or "light")
+        return theme_mode if theme_mode in {"light", "dark"} else "light"
+
+    def _normalize_color_scheme(self, value: Any) -> str:
+        color_scheme = str(value or "blue")
+        return color_scheme if color_scheme in {"blue", "green", "red", "yellow"} else "blue"
 
     def _planned_minutes_for(self, session_type: str) -> int:
         if session_type == "pomodoro":

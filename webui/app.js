@@ -15,6 +15,8 @@ const app = Vue.createApp({
           short_break_minutes: 5,
           long_break_minutes: 15,
           long_break_every: 4,
+          theme_mode: "light",
+          color_scheme: "blue",
         },
         current_session: null,
         tasks: [],
@@ -53,7 +55,19 @@ const app = Vue.createApp({
         longBreakEvery: 4,
         blockedDomains: [],
         newBlockedDomain: "",
+        themeMode: "light",
+        colorScheme: "blue",
       },
+      themeOptions: [
+        { value: "light", label: "浅色" },
+        { value: "dark", label: "深色" },
+      ],
+      colorOptions: [
+        { value: "blue", label: "淡蓝" },
+        { value: "green", label: "淡绿" },
+        { value: "red", label: "淡红" },
+        { value: "yellow", label: "淡黄" },
+      ],
       settingsDirty: false,
       submitting: false,
       syncing: false,
@@ -140,7 +154,7 @@ const app = Vue.createApp({
 
     settingsSummary() {
       const count = this.settings.blocked_domains.length;
-      return `${this.settings.session_minutes} 分钟 · 番茄 ${this.settings.pomodoro_minutes} 分钟 · ${count ? `${count} 个网站` : "未设置屏蔽"}`;
+      return `${this.settings.session_minutes} 分钟 · ${this.themeModeLabel(this.settings.theme_mode)} · ${this.colorSchemeLabel(this.settings.color_scheme)} · ${count ? `${count} 个网站` : "未设置屏蔽"}`;
     },
 
     pageTitle() {
@@ -211,23 +225,35 @@ const app = Vue.createApp({
     },
 
     applySnapshot(snapshot) {
-      this.snapshot = snapshot;
-      this.localElapsed = snapshot.current_session ? snapshot.current_session.elapsed_seconds : 0;
+      const normalizedSnapshot = {
+        ...snapshot,
+        settings: {
+          theme_mode: "light",
+          color_scheme: "blue",
+          ...snapshot.settings,
+        },
+      };
+      this.snapshot = normalizedSnapshot;
+      this.localElapsed = normalizedSnapshot.current_session ? normalizedSnapshot.current_session.elapsed_seconds : 0;
 
-      if (!this.selectedTaskId && snapshot.tasks?.length) {
-        const firstOpenTask = snapshot.tasks.find((task) => !task.completed);
+      if (!this.selectedTaskId && normalizedSnapshot.tasks?.length) {
+        const firstOpenTask = normalizedSnapshot.tasks.find((task) => !task.completed);
         this.selectedTaskId = firstOpenTask?.id || "";
       }
 
       if (!this.settingsDirty) {
-        this.form.sessionMinutes = snapshot.settings.session_minutes;
-        this.form.pomodoroMinutes = snapshot.settings.pomodoro_minutes;
-        this.form.shortBreakMinutes = snapshot.settings.short_break_minutes;
-        this.form.longBreakMinutes = snapshot.settings.long_break_minutes;
-        this.form.longBreakEvery = snapshot.settings.long_break_every;
-        this.form.blockedDomains = [...snapshot.settings.blocked_domains];
+        this.form.sessionMinutes = normalizedSnapshot.settings.session_minutes;
+        this.form.pomodoroMinutes = normalizedSnapshot.settings.pomodoro_minutes;
+        this.form.shortBreakMinutes = normalizedSnapshot.settings.short_break_minutes;
+        this.form.longBreakMinutes = normalizedSnapshot.settings.long_break_minutes;
+        this.form.longBreakEvery = normalizedSnapshot.settings.long_break_every;
+        this.form.blockedDomains = [...normalizedSnapshot.settings.blocked_domains];
         this.form.newBlockedDomain = "";
+        this.form.themeMode = normalizedSnapshot.settings.theme_mode;
+        this.form.colorScheme = normalizedSnapshot.settings.color_scheme;
       }
+
+      this.applyTheme(this.form.themeMode, this.form.colorScheme);
     },
 
     async refreshState() {
@@ -300,6 +326,8 @@ const app = Vue.createApp({
             long_break_minutes: Number(this.form.longBreakMinutes),
             long_break_every: Number(this.form.longBreakEvery),
             blocked_domains: this.form.blockedDomains,
+            theme_mode: this.form.themeMode,
+            color_scheme: this.form.colorScheme,
           }),
         });
         this.settingsDirty = false;
@@ -325,6 +353,36 @@ const app = Vue.createApp({
     removeBlockedDomain(domain) {
       this.form.blockedDomains = this.form.blockedDomains.filter((item) => item !== domain);
       this.settingsDirty = true;
+    },
+
+    selectThemeMode(value) {
+      this.form.themeMode = value;
+      this.updateAppearance();
+    },
+
+    selectColorScheme(value) {
+      this.form.colorScheme = value;
+      this.updateAppearance();
+    },
+
+    updateAppearance() {
+      this.settingsDirty = true;
+      this.applyTheme(this.form.themeMode, this.form.colorScheme);
+    },
+
+    applyTheme(themeMode = "light", colorScheme = "blue") {
+      const theme = this.themeOptions.some((item) => item.value === themeMode) ? themeMode : "light";
+      const color = this.colorOptions.some((item) => item.value === colorScheme) ? colorScheme : "blue";
+      document.documentElement.dataset.theme = theme;
+      document.documentElement.dataset.color = color;
+    },
+
+    themeModeLabel(value) {
+      return this.themeOptions.find((item) => item.value === value)?.label || "浅色";
+    },
+
+    colorSchemeLabel(value) {
+      return this.colorOptions.find((item) => item.value === value)?.label || "淡蓝";
     },
 
     selectPage(page) {
@@ -453,6 +511,7 @@ const app = Vue.createApp({
   },
 
   mounted() {
+    this.applyTheme(this.form.themeMode, this.form.colorScheme);
     this.refreshState();
     this.refreshTimer = window.setInterval(this.refreshState, 5000);
     this.tickTimer = window.setInterval(() => {

@@ -7,6 +7,40 @@ window.SettingsPage = {
           <small>{{ $root.settingsSummary }}</small>
         </div>
         <form class="settings-form" @submit.prevent="$root.saveSettings">
+          <section class="field appearance-field" aria-label="主题模式">
+            <span>主题</span>
+            <div class="option-row">
+              <button
+                v-for="theme in $root.themeOptions"
+                :key="theme.value"
+                class="option-button"
+                :class="{ active: $root.form.themeMode === theme.value }"
+                type="button"
+                @click="$root.selectThemeMode(theme.value)"
+              >
+                {{ theme.label }}
+              </button>
+            </div>
+          </section>
+
+          <section class="field appearance-field" aria-label="主题配色">
+            <span>配色</span>
+            <div class="option-row color-options">
+              <button
+                v-for="color in $root.colorOptions"
+                :key="color.value"
+                class="option-button color-option"
+                :class="{ active: $root.form.colorScheme === color.value }"
+                :data-color-option="color.value"
+                type="button"
+                @click="$root.selectColorScheme(color.value)"
+              >
+                <i aria-hidden="true"></i>
+                {{ color.label }}
+              </button>
+            </div>
+          </section>
+
           <label class="field inline-field">
             <span>默认时长</span>
             <input v-model.number="$root.form.sessionMinutes" type="number" min="5" max="240" @input="$root.settingsDirty = true" />
