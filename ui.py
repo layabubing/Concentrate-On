@@ -83,6 +83,7 @@ class SessionRecord:
     blocked_domains: list[str]
     session_type: str = "focus"
     task_id: str | None = None
+    task_ids: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -93,6 +94,7 @@ class ActiveSession:
     blocking_active: bool
     session_type: str = "focus"
     task_id: str | None = None
+    task_ids: list[str] = field(default_factory=list)
     blocking_message: str | None = None
 
 
@@ -234,8 +236,15 @@ class FocusService:
     def delete_task(self, task_id: str) -> dict[str, Any]:
         with self.lock:
             self.state.tasks = [task for task in self.state.tasks if task.id != task_id]
-            if self.state.current_session and self.state.current_session.task_id == task_id:
-                self.state.current_session.task_id = None
+            if self.state.current_session:
+                if self.state.current_session.task_id == task_id:
+                    self.state.current_session.task_id = None
+                self.state.current_session.task_ids = [
+                    item for item in self._session_task_ids(self.state.current_session) if item != task_id
+                ]
+                self.state.current_session.task_id = (
+                    self.state.current_session.task_ids[0] if self.state.current_session.task_ids else None
+                )
             self.store.save(self.state)
             return self._build_snapshot()
 
@@ -248,9 +257,8 @@ class FocusService:
             session_type = str(payload.get("session_type", "focus"))
             if session_type not in {"focus", "pomodoro", "short_break", "long_break"}:
                 session_type = "focus"
-            task_id = str(payload.get("task_id") or "") or None
-            if task_id is not None and self._find_task(task_id) is None:
-                task_id = None
+            task_ids = self._normalize_task_ids(payload.get("task_ids"), payload.get("task_id"))
+            task_id = task_ids[0] if task_ids else None
             planned_minutes = self._planned_minutes_for(session_type)
 
             session = ActiveSession(
@@ -260,6 +268,7 @@ class FocusService:
                 blocking_active=False,
                 session_type=session_type,
                 task_id=task_id,
+                task_ids=task_ids,
                 blocking_message=None,
             )
             self.state.current_session = session
@@ -284,12 +293,14 @@ class FocusService:
                     blocked_domains=list(session.blocked_domains),
                     session_type=session.session_type,
                     task_id=session.task_id,
+                    task_ids=self._session_task_ids(session),
                 )
             )
-            if session.session_type == "pomodoro" and session.task_id:
-                task = self._find_task(session.task_id)
-                if task is not None:
-                    task.pomodoros += 1
+            if session.session_type == "pomodoro":
+                for task_id in self._session_task_ids(session):
+                    task = self._find_task(task_id)
+                    if task is not None:
+                        task.pomodoros += 1
 
             self.state.current_session = None
             self._disable_blocking()
@@ -315,6 +326,7 @@ class FocusService:
                 blocked_domains=list(session.blocked_domains),
                 session_type=session.session_type,
                 task_id=session.task_id,
+                task_ids=self._session_task_ids(session),
             )
         )
         self.state.current_session = None
@@ -371,6 +383,28 @@ class FocusService:
     def _find_task(self, task_id: str) -> TaskItem | None:
         return next((task for task in self.state.tasks if task.id == task_id), None)
 
+    def _normalize_task_ids(self, raw_task_ids: Any, fallback_task_id: Any = None) -> list[str]:
+        if isinstance(raw_task_ids, list):
+            candidates = raw_task_ids
+        elif raw_task_ids is None:
+            candidates = [fallback_task_id] if fallback_task_id else []
+        else:
+            candidates = [raw_task_ids]
+
+        task_ids: list[str] = []
+        for candidate in candidates:
+            task_id = str(candidate or "").strip()
+            if task_id and task_id not in task_ids and self._find_task(task_id) is not None:
+                task_ids.append(task_id)
+        return task_ids
+
+    def _session_task_ids(self, session: ActiveSession | SessionRecord) -> list[str]:
+        raw_task_ids = getattr(session, "task_ids", [])
+        task_ids = raw_task_ids if isinstance(raw_task_ids, list) else []
+        if not task_ids and getattr(session, "task_id", None):
+            task_ids = [str(session.task_id)]
+        return [task_id for task_id in task_ids if self._find_task(task_id) is not None]
+
     def _build_snapshot(self) -> dict[str, Any]:
         current = self.state.current_session
         total_seconds = sum(item.duration_seconds for item in self.state.history)
@@ -411,8 +445,11 @@ class FocusService:
         }
 
         if current is not None:
+            current_task_ids = self._session_task_ids(current)
             response["current_session"] = {
                 **asdict(current),
+                "task_id": current_task_ids[0] if current_task_ids else None,
+                "task_ids": current_task_ids,
                 "elapsed_seconds": max(
                     0,
                     int((datetime.now() - parse_datetime(current.started_at)).total_seconds()),

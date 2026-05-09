@@ -61,7 +61,7 @@ const app = Vue.createApp({
         { key: "settings", label: "设置", icon: "◎" },
       ],
       activePage: storedActivePage,
-      selectedTaskId: "",
+      selectedTaskIds: [],
       newTaskTitle: "",
       taskMessage: "",
       taskSubmitting: false,
@@ -131,8 +131,20 @@ const app = Vue.createApp({
       return this.snapshot.pomodoro || { completed: 0, next_break_type: "short_break" };
     },
 
-    selectedTask() {
-      return this.tasks.find((task) => task.id === this.selectedTaskId) || null;
+    selectedTasks() {
+      return this.selectedTaskIds
+        .map((taskId) => this.tasks.find((task) => task.id === taskId))
+        .filter(Boolean);
+    },
+
+    selectedTaskSummary() {
+      if (!this.selectedTasks.length) {
+        return "不关联任务";
+      }
+      if (this.selectedTasks.length <= 2) {
+        return this.selectedTasks.map((task) => task.title).join("、");
+      }
+      return `${this.selectedTasks[0].title}、${this.selectedTasks[1].title} 等 ${this.selectedTasks.length} 个任务`;
     },
 
     recentSessions() {
@@ -233,7 +245,8 @@ const app = Vue.createApp({
         return "按下开始，进入计时。";
       }
       if (this.currentSession.session_type === "pomodoro") {
-        return this.selectedTask ? `正在做：${this.selectedTask.title}` : "番茄钟进行中。";
+        const currentTasks = this.tasksForSession(this.currentSession);
+        return currentTasks.length ? `正在做：${this.formatTaskList(currentTasks)}` : "番茄钟进行中。";
       }
       if (this.currentSession.session_type === "short_break" || this.currentSession.session_type === "long_break") {
         return "休息中。";
@@ -271,9 +284,14 @@ const app = Vue.createApp({
       this.snapshot = normalizedSnapshot;
       this.localElapsed = normalizedSnapshot.current_session ? normalizedSnapshot.current_session.elapsed_seconds : 0;
 
-      if (!this.selectedTaskId && normalizedSnapshot.tasks?.length) {
+      const availableTaskIds = new Set(
+        (normalizedSnapshot.tasks || []).filter((task) => !task.completed).map((task) => task.id)
+      );
+      this.selectedTaskIds = this.selectedTaskIds.filter((taskId) => availableTaskIds.has(taskId));
+
+      if (!this.selectedTaskIds.length && normalizedSnapshot.tasks?.length) {
         const firstOpenTask = normalizedSnapshot.tasks.find((task) => !task.completed);
-        this.selectedTaskId = firstOpenTask?.id || "";
+        this.selectedTaskIds = firstOpenTask ? [firstOpenTask.id] : [];
       }
 
       if (!this.settingsDirty) {
@@ -316,21 +334,23 @@ const app = Vue.createApp({
     },
 
     async startPomodoro() {
-      await this.startSession("pomodoro", this.selectedTaskId || null);
+      await this.startSession("pomodoro", this.selectedTaskIds);
     },
 
     async startBreak(type = this.pomodoro.next_break_type) {
       await this.startSession(type);
     },
 
-    async startSession(sessionType, taskId = null) {
+    async startSession(sessionType, taskIds = []) {
       this.submitting = true;
       try {
+        const normalizedTaskIds = Array.isArray(taskIds) ? taskIds : taskIds ? [taskIds] : [];
         const snapshot = await this.request("/api/focus/start", {
           method: "POST",
           body: JSON.stringify({
             session_type: sessionType,
-            task_id: taskId,
+            task_id: normalizedTaskIds[0] || null,
+            task_ids: normalizedTaskIds,
           }),
         });
         this.applySnapshot(snapshot);
@@ -563,15 +583,38 @@ const app = Vue.createApp({
           method: "POST",
           body: JSON.stringify({ _delete: true }),
         });
-        if (this.selectedTaskId === task.id) {
-          this.selectedTaskId = "";
-        }
+        this.selectedTaskIds = this.selectedTaskIds.filter((taskId) => taskId !== task.id);
         this.applySnapshot(snapshot);
       } catch (error) {
         this.taskMessage = `删除失败：${error.message}`;
       } finally {
         this.taskSubmitting = false;
       }
+    },
+
+    toggleSelectedTask(task) {
+      const exists = this.selectedTaskIds.includes(task.id);
+      this.selectedTaskIds = exists
+        ? this.selectedTaskIds.filter((taskId) => taskId !== task.id)
+        : [...this.selectedTaskIds, task.id];
+    },
+
+    tasksForSession(session) {
+      const taskIds = Array.isArray(session?.task_ids) && session.task_ids.length
+        ? session.task_ids
+        : session?.task_id
+          ? [session.task_id]
+          : [];
+      return taskIds
+        .map((taskId) => this.tasks.find((task) => task.id === taskId))
+        .filter(Boolean);
+    },
+
+    formatTaskList(tasks) {
+      if (tasks.length <= 2) {
+        return tasks.map((task) => task.title).join("、");
+      }
+      return `${tasks[0].title}、${tasks[1].title} 等 ${tasks.length} 个任务`;
     },
 
     setSessionMessage(message) {

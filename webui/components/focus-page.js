@@ -23,10 +23,24 @@ window.FocusPage = {
           </div>
         </div>
         <div class="pomodoro-actions">
-          <select v-model="$root.selectedTaskId" :disabled="$root.isFocusing">
-            <option value="">不关联任务</option>
-            <option v-for="task in $root.openTasks" :key="task.id" :value="task.id">{{ task.title }}</option>
-          </select>
+          <section class="task-bind-picker" aria-label="绑定任务">
+            <div class="task-bind-head">
+              <span>绑定任务</span>
+              <small>{{ $root.selectedTaskSummary }}</small>
+            </div>
+            <div v-if="!$root.openTasks.length" class="task-bind-empty">没有可绑定的待办任务。</div>
+            <div v-else class="task-bind-list">
+              <label v-for="task in $root.openTasks" :key="task.id" class="task-bind-option">
+                <input
+                  type="checkbox"
+                  :checked="$root.selectedTaskIds.includes(task.id)"
+                  :disabled="$root.isFocusing"
+                  @change="$root.toggleSelectedTask(task)"
+                />
+                <span>{{ task.title }}</span>
+              </label>
+            </div>
+          </section>
           <button class="save-button" type="button" :disabled="$root.submitting || $root.isFocusing" @click="$root.startPomodoro">开始番茄钟</button>
           <button class="subtle-button" type="button" :disabled="$root.submitting || $root.isFocusing" @click="$root.startBreak()">开始休息</button>
         </div>

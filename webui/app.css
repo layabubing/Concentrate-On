@@ -388,6 +388,62 @@ h2 {
   flex: 1;
 }
 
+.task-bind-picker {
+  flex: 1;
+  min-width: min(100%, 18rem);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 0.75rem;
+  background: var(--control-bg);
+}
+
+.task-bind-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.8rem;
+  margin-bottom: 0.55rem;
+}
+
+.task-bind-head span {
+  color: var(--soft);
+  font-size: 0.86rem;
+}
+
+.task-bind-head small,
+.task-bind-empty {
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.task-bind-head small {
+  min-width: 0;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.task-bind-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.task-bind-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.38rem;
+  max-width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.42rem 0.62rem;
+  color: var(--text);
+  background: var(--panel);
+}
+
+.task-bind-option span {
+  overflow-wrap: anywhere;
+}
+
 .domain-field {
   gap: 0.75rem;
 }
