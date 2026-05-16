@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import atexit
+import html
 import json
 import mimetypes
+import re
 import threading
 import time
 import webbrowser
@@ -13,7 +15,9 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.error import URLError
 from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 
 from ban_website.redirector import WebsiteBlocker
 
@@ -29,6 +33,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 WEB_ROOT = PROJECT_ROOT / "webui"
 DATA_ROOT = PROJECT_ROOT / ".concentrateon"
 STATE_FILE = DATA_ROOT / "state.json"
+DAILY_QUOTE_URL = "https://v.api.aa1.cn/api/yiyan/index.php"
 
 
 def now_iso() -> str:
@@ -63,6 +68,38 @@ def sanitize_domain_list(raw_domains: list[str] | str | None) -> list[str]:
     return domains
 
 
+def html_to_text(value: str) -> str:
+    without_tags = re.sub(r"<[^>]*>", " ", value)
+    unescaped = html.unescape(without_tags)
+    return re.sub(r"\s+", " ", unescaped).strip()
+
+
+def fetch_daily_quote() -> str:
+    request = Request(
+        DAILY_QUOTE_URL,
+        headers={
+            "User-Agent": "ConcentrateOn/1.0",
+        },
+    )
+    with urlopen(request, timeout=5) as response:
+        charset = response.headers.get_content_charset() or "utf-8"
+        content = response.read().decode(charset, errors="replace")
+    quote = html_to_text(content)
+    if not quote:
+        raise ValueError("Daily quote response is empty.")
+    return quote
+
+
+def normalize_bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
 @dataclass
 class Settings:
     blocked_domains: list[str] = field(default_factory=lambda: ["baidu.com"])
@@ -73,6 +110,7 @@ class Settings:
     long_break_every: int = 4
     theme_mode: str = "light"
     color_scheme: str = "blue"
+    daily_quote_enabled: bool = True
 
 
 @dataclass
@@ -184,6 +222,10 @@ class FocusService:
             long_break_every = max(2, min(int(payload.get("long_break_every", self.state.settings.long_break_every)), 12))
             theme_mode = self._normalize_theme_mode(payload.get("theme_mode", self.state.settings.theme_mode))
             color_scheme = self._normalize_color_scheme(payload.get("color_scheme", self.state.settings.color_scheme))
+            daily_quote_enabled = normalize_bool(
+                payload.get("daily_quote_enabled"),
+                self.state.settings.daily_quote_enabled,
+            )
 
             self.state.settings = Settings(
                 blocked_domains=sanitize_domain_list(domains),
@@ -194,6 +236,7 @@ class FocusService:
                 long_break_every=long_break_every,
                 theme_mode=theme_mode,
                 color_scheme=color_scheme,
+                daily_quote_enabled=daily_quote_enabled,
             )
 
             if self.state.current_session is not None:
@@ -472,6 +515,16 @@ class ConcentrateRequestHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.path == "/api/state":
             self._send_json(self.server.service.snapshot())
+            return
+
+        if parsed.path == "/api/yiyan":
+            try:
+                self._send_json({"quote": fetch_daily_quote()})
+            except (URLError, TimeoutError, ValueError, OSError) as exc:
+                self._send_json(
+                    {"quote": "", "error": f"每日一言获取失败：{exc}"},
+                    status=HTTPStatus.BAD_GATEWAY,
+                )
             return
 
         self._serve_static(parsed.path)

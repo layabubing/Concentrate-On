@@ -35,6 +35,7 @@ const app = Vue.createApp({
           long_break_every: 4,
           theme_mode: "light",
           color_scheme: "blue",
+          daily_quote_enabled: true,
         },
         current_session: null,
         tasks: [],
@@ -75,6 +76,7 @@ const app = Vue.createApp({
         newBlockedDomain: "",
         themeMode: storedThemeMode,
         colorScheme: storedColorScheme,
+        dailyQuoteEnabled: true,
       },
       themeOptions: [
         { value: "light", label: "浅色" },
@@ -91,6 +93,9 @@ const app = Vue.createApp({
       settingsSubmitting: false,
       settingsSaveStatus: "saved",
       syncing: false,
+      dailyQuote: "",
+      dailyQuoteLoading: false,
+      dailyQuoteError: "",
       localElapsed: 0,
       refreshTimer: null,
       tickTimer: null,
@@ -277,6 +282,7 @@ const app = Vue.createApp({
         settings: {
           theme_mode: "light",
           color_scheme: "blue",
+          daily_quote_enabled: true,
           ...snapshot.settings,
         },
       };
@@ -304,6 +310,7 @@ const app = Vue.createApp({
         this.form.newBlockedDomain = "";
         this.form.themeMode = normalizedSnapshot.settings.theme_mode;
         this.form.colorScheme = normalizedSnapshot.settings.color_scheme;
+        this.form.dailyQuoteEnabled = Boolean(normalizedSnapshot.settings.daily_quote_enabled);
       }
 
       this.rememberPersonalization({
@@ -311,6 +318,14 @@ const app = Vue.createApp({
         colorScheme: this.form.colorScheme,
       });
       this.applyTheme(this.form.themeMode, this.form.colorScheme);
+
+      if (!normalizedSnapshot.settings.daily_quote_enabled) {
+        this.dailyQuote = "";
+        this.dailyQuoteError = "";
+        this.dailyQuoteLoading = false;
+      } else if (!this.dailyQuote && !this.dailyQuoteLoading && !this.dailyQuoteError) {
+        this.fetchDailyQuote();
+      }
     },
 
     async refreshState() {
@@ -322,6 +337,25 @@ const app = Vue.createApp({
         this.setSessionMessage(`状态同步失败：${error.message}`);
       } finally {
         this.syncing = false;
+      }
+    },
+
+    async fetchDailyQuote() {
+      if (!this.form.dailyQuoteEnabled) {
+        return;
+      }
+      this.dailyQuoteLoading = true;
+      this.dailyQuoteError = "";
+      try {
+        const payload = await this.request("/api/yiyan");
+        this.dailyQuote = String(payload.quote || "").trim();
+        if (!this.dailyQuote) {
+          this.dailyQuoteError = "暂时没有取到内容。";
+        }
+      } catch (error) {
+        this.dailyQuoteError = "每日一言暂时不可用。";
+      } finally {
+        this.dailyQuoteLoading = false;
       }
     },
 
@@ -474,6 +508,7 @@ const app = Vue.createApp({
         blocked_domains: this.form.blockedDomains,
         theme_mode: this.form.themeMode,
         color_scheme: this.form.colorScheme,
+        daily_quote_enabled: this.form.dailyQuoteEnabled,
       };
     },
 
@@ -615,6 +650,17 @@ const app = Vue.createApp({
         return tasks.map((task) => task.title).join("、");
       }
       return `${tasks[0].title}、${tasks[1].title} 等 ${tasks.length} 个任务`;
+    },
+
+    toggleDailyQuoteEnabled() {
+      if (!this.form.dailyQuoteEnabled) {
+        this.dailyQuote = "";
+        this.dailyQuoteError = "";
+        this.dailyQuoteLoading = false;
+      } else if (!this.dailyQuote && !this.dailyQuoteLoading) {
+        this.fetchDailyQuote();
+      }
+      this.scheduleSettingsSave(120);
     },
 
     setSessionMessage(message) {

@@ -15,6 +15,17 @@ window.FocusPage = {
         <p class="message" :class="{ warning: $root.statusIsWarning }">{{ $root.statusMessage }}</p>
       </section>
 
+      <section v-if="$root.settings.daily_quote_enabled" class="daily-quote-card panel" aria-label="每日一言">
+        <div class="daily-quote-head">
+          <span>每日一言</span>
+          <button class="quote-refresh-button" type="button" :disabled="$root.dailyQuoteLoading" @click="$root.fetchDailyQuote">
+            {{ $root.dailyQuoteLoading ? "获取中" : "换一句" }}
+          </button>
+        </div>
+        <p v-if="$root.dailyQuote" class="daily-quote-text">{{ $root.dailyQuote }}</p>
+        <p v-else class="daily-quote-text muted">{{ $root.dailyQuoteError || "正在获取一句话。" }}</p>
+      </section>
+
       <section class="pomodoro-card panel">
         <div class="section-head compact-head">
           <div>

@@ -41,6 +41,17 @@ window.SettingsPage = {
             </div>
           </section>
 
+          <label class="field switch-field">
+            <span>每日一言</span>
+            <input
+              v-model="$root.form.dailyQuoteEnabled"
+              type="checkbox"
+              role="switch"
+              @change="$root.toggleDailyQuoteEnabled"
+            />
+            <em>{{ $root.form.dailyQuoteEnabled ? "已开启" : "已关闭" }}</em>
+          </label>
+
           <label class="field inline-field">
             <span>默认时长</span>
             <input v-model.number="$root.form.sessionMinutes" type="number" min="5" max="240" @input="$root.markSettingsChanged" />

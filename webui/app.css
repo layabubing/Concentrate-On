@@ -303,7 +303,8 @@ h2 {
 .history-panel,
 .settings-panel,
 .pomodoro-card,
-.task-panel {
+.task-panel,
+.daily-quote-card {
   margin-top: 0.9rem;
   overflow: hidden;
 }
@@ -333,6 +334,44 @@ h2 {
 .inline-field {
   grid-template-columns: auto minmax(6rem, 9rem) auto;
   align-items: center;
+}
+
+.switch-field {
+  grid-template-columns: auto auto 1fr;
+  align-items: center;
+}
+
+.switch-field input {
+  width: 2.65rem;
+  height: 1.45rem;
+  appearance: none;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--control-bg);
+  position: relative;
+  transition: background 180ms ease, border-color 180ms ease;
+}
+
+.switch-field input::after {
+  content: "";
+  position: absolute;
+  top: 0.18rem;
+  left: 0.18rem;
+  width: 0.95rem;
+  height: 0.95rem;
+  border-radius: 999px;
+  background: var(--muted);
+  transition: transform 180ms ease, background 180ms ease;
+}
+
+.switch-field input:checked {
+  border-color: rgba(var(--accent-rgb), 0.48);
+  background: rgba(var(--accent-rgb), 0.18);
+}
+
+.switch-field input:checked::after {
+  transform: translateX(1.18rem);
+  background: var(--accent-dark);
 }
 
 .field input,
@@ -375,6 +414,52 @@ h2 {
 
 .compact-head {
   padding-bottom: 0.2rem;
+}
+
+.daily-quote-card {
+  padding: 1rem 1.15rem;
+}
+
+.daily-quote-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  margin-bottom: 0.55rem;
+}
+
+.daily-quote-head span {
+  color: var(--soft);
+  font-size: 0.86rem;
+}
+
+.quote-refresh-button {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.42rem 0.7rem;
+  color: var(--muted);
+  background: var(--control-bg);
+  transition: transform 180ms ease, opacity 180ms ease;
+}
+
+.quote-refresh-button:hover {
+  transform: translateY(-1px);
+}
+
+.quote-refresh-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.daily-quote-text {
+  margin: 0;
+  color: var(--text);
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.daily-quote-text.muted {
+  color: var(--muted);
 }
 
 .pomodoro-actions,
