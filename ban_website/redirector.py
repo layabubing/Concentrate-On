@@ -4,6 +4,7 @@ import atexit
 import ctypes
 import os
 import platform
+import re
 import signal
 import sys
 import time
@@ -11,8 +12,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 TARGET_DOMAIN = "baidu.com"
-REDIRECT_IP = "127.0.0.1"
+BLOCK_IP = "0.0.0.0"
+REDIRECT_IP = BLOCK_IP
 TAG = "# Added by ConcentrateOn"
+DOMAIN_PATTERN = re.compile(r"^(?!-)[a-z0-9-]+(?<!-)(\.(?!-)[a-z0-9-]+(?<!-))+$")
 
 
 def get_hosts_path() -> str:
@@ -56,7 +59,17 @@ def normalize_domain(value: str) -> str:
         cleaned = cleaned.split("://", 1)[1]
     cleaned = cleaned.split("/", 1)[0]
     cleaned = cleaned.split("?", 1)[0]
-    cleaned = cleaned.strip(".")
+    cleaned = cleaned.split("#", 1)[0]
+    cleaned = cleaned.rsplit("@", 1)[-1]
+    cleaned = cleaned.removeprefix("*.").removeprefix("www.").strip(".")
+    if ":" in cleaned:
+        host, port = cleaned.rsplit(":", 1)
+        if port.isdigit():
+            cleaned = host
+    if not cleaned or any(char.isspace() for char in cleaned):
+        return ""
+    if not DOMAIN_PATTERN.fullmatch(cleaned):
+        return ""
     return cleaned
 
 
@@ -65,19 +78,30 @@ class BlockerStatus:
     active_domains: list[str]
     hosts_path: str
     is_admin: bool
+    block_ip: str
 
 
 class WebsiteBlocker:
-    def __init__(self, redirect_ip: str = REDIRECT_IP, tag: str = TAG) -> None:
-        self.redirect_ip = redirect_ip
+    def __init__(
+        self,
+        block_ip: str = BLOCK_IP,
+        tag: str = TAG,
+        hosts_path: str | Path | None = None,
+        redirect_ip: str | None = None,
+    ) -> None:
+        if redirect_ip is not None:
+            block_ip = redirect_ip
+        self.block_ip = block_ip
+        self.redirect_ip = block_ip
         self.tag = tag
-        self.hosts_path = Path(get_hosts_path())
+        self.hosts_path = Path(hosts_path) if hosts_path is not None else Path(get_hosts_path())
 
     def status(self) -> BlockerStatus:
         return BlockerStatus(
             active_domains=self.active_domains(),
             hosts_path=str(self.hosts_path),
             is_admin=is_admin(),
+            block_ip=self.block_ip,
         )
 
     def active_domains(self) -> list[str]:
@@ -89,7 +113,7 @@ class WebsiteBlocker:
             if self.tag not in line:
                 continue
             parts = line.split()
-            if len(parts) >= 2:
+            if len(parts) >= 2 and parts[0] == self.block_ip:
                 domains.append(parts[1].removeprefix("www."))
 
         return sorted(set(domains))
@@ -124,8 +148,8 @@ class WebsiteBlocker:
         kept_lines = [line for line in existing_lines if self.tag not in line]
         new_lines = list(kept_lines)
         for domain in domains:
-            new_lines.append(f"{self.redirect_ip} {domain} {self.tag}")
-            new_lines.append(f"{self.redirect_ip} www.{domain} {self.tag}")
+            new_lines.append(f"{self.block_ip} {domain} {self.tag}")
+            new_lines.append(f"{self.block_ip} www.{domain} {self.tag}")
 
         content = "\n".join(new_lines).rstrip()
         if content:
@@ -154,7 +178,7 @@ def run_redirector() -> None:
     signal.signal(signal.SIGINT, handle_signal)
     signal.signal(signal.SIGTERM, handle_signal)
 
-    print(f"[*] Redirecting {TARGET_DOMAIN} to {blocker.redirect_ip}. Press Ctrl+C to stop.")
+    print(f"[*] Blocking {TARGET_DOMAIN} via hosts -> {blocker.block_ip}. Press Ctrl+C to stop.")
     try:
         while True:
             time.sleep(1)

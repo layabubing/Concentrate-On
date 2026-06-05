@@ -3,6 +3,38 @@ const VALID_THEME_MODES = ["light", "dark"];
 const VALID_COLOR_SCHEMES = ["blue", "green", "red", "yellow"];
 const VALID_PAGES = ["focus", "tasks", "stats", "settings"];
 
+function normalizeDomainInput(value) {
+  let cleaned = String(value || "").trim().toLowerCase();
+  if (!cleaned) {
+    return "";
+  }
+  if (cleaned.includes("://")) {
+    cleaned = cleaned.split("://", 2)[1];
+  }
+  cleaned = cleaned.split("/", 1)[0].split("?", 1)[0].split("#", 1)[0];
+  cleaned = cleaned.split("@").pop();
+  cleaned = cleaned.replace(/^\*\./, "").replace(/^www\./, "").replace(/^\.+|\.+$/g, "");
+  if (cleaned.includes(":")) {
+    const parts = cleaned.split(":");
+    const maybePort = parts[parts.length - 1];
+    if (/^\d+$/.test(maybePort)) {
+      cleaned = parts.slice(0, -1).join(":");
+    }
+  }
+  if (!cleaned || /\s/.test(cleaned)) {
+    return "";
+  }
+
+  const labels = cleaned.split(".");
+  const valid = labels.length > 1 && labels.every((label) => (
+    label.length > 0
+    && /^[a-z0-9-]+$/.test(label)
+    && !label.startsWith("-")
+    && !label.endsWith("-")
+  ));
+  return valid ? cleaned : "";
+}
+
 function readPersonalization() {
   try {
     return JSON.parse(window.localStorage.getItem(PERSONALIZATION_KEY) || "{}");
@@ -53,6 +85,8 @@ const app = Vue.createApp({
         blocker: {
           is_admin: false,
           hosts_path: "",
+          block_ip: "0.0.0.0",
+          active_domains: [],
         },
       },
       navItems: [
@@ -93,6 +127,9 @@ const app = Vue.createApp({
       settingsSubmitting: false,
       settingsSaveStatus: "saved",
       syncing: false,
+      apiOnline: false,
+      lastSyncAt: "",
+      lastApiError: "",
       dailyQuote: "",
       dailyQuoteLoading: false,
       dailyQuoteError: "",
@@ -180,7 +217,50 @@ const app = Vue.createApp({
     },
 
     blockerLabel() {
-      return this.blocker.is_admin ? "可用" : "需管理员权限";
+      if (!this.blocker.is_admin) {
+        return "需管理员权限";
+      }
+      return this.currentSession?.blocking_active ? "hosts 已写入" : "可写 hosts";
+    },
+
+    blockerActiveDomains() {
+      return this.blocker.active_domains || [];
+    },
+
+    blockerTargetLabel() {
+      return `${this.blocker.block_ip || "0.0.0.0"} hosts`;
+    },
+
+    blockerStateText() {
+      if (!this.apiOnline) {
+        return "正在连接后端";
+      }
+      if (!this.blocker.is_admin) {
+        return "后端已连接，hosts 需要管理员权限";
+      }
+      if (this.currentSession?.blocking_active) {
+        return "已写入 hosts，网站将解析到 0.0.0.0";
+      }
+      if (this.currentSession) {
+        return "会话进行中，hosts 未生效";
+      }
+      return "后端已连接，开始专注后写入 hosts";
+    },
+
+    blockerDetailText() {
+      const hostsPath = this.blocker.hosts_path || "未知 hosts 路径";
+      const activeCount = this.blockerActiveDomains.length;
+      return activeCount ? `${hostsPath} · 已写入 ${activeCount} 个域名` : `${hostsPath} · 当前未写入`;
+    },
+
+    apiStatusText() {
+      if (this.syncing) {
+        return "同步中";
+      }
+      if (!this.apiOnline) {
+        return this.lastApiError || "等待后端响应";
+      }
+      return this.lastSyncAt ? `后端已连接 · ${this.lastSyncAt}` : "后端已连接";
     },
 
     todaySummary() {
@@ -262,18 +342,38 @@ const app = Vue.createApp({
 
   methods: {
     async request(path, options = {}) {
-      const response = await fetch(path, {
-        headers: {
-          "Content-Type": "application/json",
-        },
-        ...options,
-      });
+      try {
+        const response = await fetch(path, {
+          headers: {
+            "Content-Type": "application/json",
+          },
+          ...options,
+        });
+        const payload = await response.json();
+        this.apiOnline = true;
+        this.lastSyncAt = new Date().toLocaleTimeString("zh-CN", {
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+        });
 
-      if (!response.ok) {
-        throw new Error(`请求失败: ${response.status}`);
+        if (!response.ok) {
+          const message = payload.error || `请求失败: ${response.status}`;
+          this.lastApiError = message;
+          throw new Error(message);
+        }
+
+        this.lastApiError = "";
+        return payload;
+      } catch (error) {
+        if (error instanceof TypeError) {
+          this.apiOnline = false;
+          this.lastApiError = "无法连接后端";
+        } else if (!this.lastApiError) {
+          this.lastApiError = error.message;
+        }
+        throw error;
       }
-
-      return response.json();
     },
 
     applySnapshot(snapshot) {
@@ -284,6 +384,13 @@ const app = Vue.createApp({
           color_scheme: "blue",
           daily_quote_enabled: true,
           ...snapshot.settings,
+        },
+        blocker: {
+          is_admin: false,
+          hosts_path: "",
+          block_ip: "0.0.0.0",
+          active_domains: [],
+          ...(snapshot.blocker || {}),
         },
       };
 
@@ -451,7 +558,7 @@ const app = Vue.createApp({
     },
 
     addBlockedDomain() {
-      const domain = this.form.newBlockedDomain.trim().toLowerCase();
+      const domain = normalizeDomainInput(this.form.newBlockedDomain);
       if (!domain || this.form.blockedDomains.includes(domain)) {
         this.form.newBlockedDomain = "";
         return;
@@ -505,7 +612,9 @@ const app = Vue.createApp({
         short_break_minutes: Number(this.form.shortBreakMinutes),
         long_break_minutes: Number(this.form.longBreakMinutes),
         long_break_every: Number(this.form.longBreakEvery),
-        blocked_domains: this.form.blockedDomains,
+        blocked_domains: this.form.blockedDomains
+          .map((domain) => normalizeDomainInput(domain))
+          .filter((domain, index, domains) => domain && domains.indexOf(domain) === index),
         theme_mode: this.form.themeMode,
         color_scheme: this.form.colorScheme,
         daily_quote_enabled: this.form.dailyQuoteEnabled,

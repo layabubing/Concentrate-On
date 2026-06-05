@@ -19,7 +19,7 @@ from urllib.error import URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
-from ban_website.redirector import WebsiteBlocker
+from ban_website.redirector import WebsiteBlocker, normalize_domain
 
 try:
     import webview
@@ -55,14 +55,9 @@ def sanitize_domain_list(raw_domains: list[str] | str | None) -> list[str]:
 
     domains: list[str] = []
     for candidate in candidates:
-        cleaned = candidate.strip().lower()
+        cleaned = normalize_domain(candidate)
         if not cleaned:
             continue
-        if "://" in cleaned:
-            cleaned = cleaned.split("://", 1)[1]
-        cleaned = cleaned.split("/", 1)[0]
-        cleaned = cleaned.split("?", 1)[0]
-        cleaned = cleaned.strip(".")
         if cleaned and cleaned not in domains:
             domains.append(cleaned)
     return domains
@@ -484,6 +479,8 @@ class FocusService:
             "blocker": {
                 "is_admin": blocker_status.is_admin,
                 "hosts_path": blocker_status.hosts_path,
+                "block_ip": blocker_status.block_ip,
+                "active_domains": blocker_status.active_domains,
             },
         }
 

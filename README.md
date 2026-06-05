@@ -123,7 +123,7 @@ python ui.py --host 127.0.0.1 --port 8000
 
 ## 网站屏蔽说明
 
-网站屏蔽通过修改系统 `hosts` 文件实现。
+网站屏蔽通过修改系统 `hosts` 文件实现：专注开始时，后端会把配置的网站写成 `0.0.0.0 example.com # Added by ConcentrateOn`，让这些域名解析到不可访问地址；专注结束或应用退出时会清理这些标记行。
 
 默认路径：
 
@@ -137,7 +137,8 @@ python ui.py --host 127.0.0.1 --port 8000
 - 修改 `hosts` 文件通常需要管理员或 root 权限。
 - 没有权限时，专注会话仍可开始，但网站屏蔽不会生效，界面会显示提示。
 - 应用只会清理带有 `# Added by ConcentrateOn` 标记的记录。
-- 每个域名会同时写入裸域名和 `www.` 域名，例如 `example.com` 与 `www.example.com`。
+- 每个域名会同时写入裸域名和 `www.` 域名，例如 `0.0.0.0 example.com` 与 `0.0.0.0 www.example.com`。
+- 设置页会通过后端 `/api/state` 快照显示 hosts 路径、写入目标 IP 和当前已写入的屏蔽域名。
 
 ## HTTP API
 

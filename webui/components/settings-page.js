@@ -98,10 +98,23 @@ window.SettingsPage = {
                 <button type="button" aria-label="移除网站" @click="$root.removeBlockedDomain(domain)">×</button>
               </span>
             </div>
+
+            <div class="blocker-status" :class="{ warning: !$root.blocker.is_admin || !$root.apiOnline }">
+              <div>
+                <strong>{{ $root.blockerStateText }}</strong>
+                <small>{{ $root.blockerDetailText }}</small>
+              </div>
+              <span>{{ $root.blockerTargetLabel }}</span>
+            </div>
+
+            <div v-if="$root.blockerActiveDomains.length" class="hosts-domain-list" aria-label="hosts 中已写入的网站">
+              <span>hosts 已写入</span>
+              <em v-for="domain in $root.blockerActiveDomains" :key="domain">{{ domain }}</em>
+            </div>
           </section>
 
           <div class="form-actions">
-            <span class="autosave-status" :class="$root.settingsSaveStatus">{{ $root.settingsStatusText }}</span>
+            <span class="autosave-status" :class="$root.settingsSaveStatus">{{ $root.settingsStatusText }} · {{ $root.apiStatusText }}</span>
             <button class="subtle-button" type="button" :disabled="$root.syncing" @click="$root.refreshState">
               {{ $root.syncing ? "同步中" : "同步" }}
             </button>
