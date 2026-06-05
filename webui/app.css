@@ -669,13 +669,27 @@ h2 {
   line-height: 1.45;
 }
 
-.blocker-status > span {
+.blocker-status-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.55rem;
+}
+
+.blocker-status-actions > span {
   flex: 0 0 auto;
   border-radius: 999px;
   padding: 0.34rem 0.58rem;
   color: var(--accent-dark);
   background: rgba(var(--accent-rgb), 0.14);
   font-size: 0.82rem;
+  white-space: nowrap;
+}
+
+.blocker-status-actions .subtle-button {
+  min-height: 2.2rem;
+  padding: 0.48rem 0.75rem;
   white-space: nowrap;
 }
 
@@ -967,6 +981,11 @@ h2 {
   .blocker-status {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .blocker-status-actions {
+    flex-wrap: wrap;
+    justify-content: flex-start;
   }
 
   .history-item span {

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import atexit
+import ctypes
 import html
 import json
 import mimetypes
+import platform
 import re
+import sys
 import threading
 import time
 import webbrowser
@@ -34,6 +37,58 @@ WEB_ROOT = PROJECT_ROOT / "webui"
 DATA_ROOT = PROJECT_ROOT / ".concentrateon"
 STATE_FILE = DATA_ROOT / "state.json"
 DAILY_QUOTE_URL = "https://v.api.aa1.cn/api/yiyan/index.php"
+
+
+def elevated_argv() -> list[str]:
+    args = list(sys.argv[1:])
+    result: list[str] = []
+    skip_next = False
+    saw_port = False
+    was_headless = False
+
+    for arg in args:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg == "--headless":
+            was_headless = True
+            continue
+        if arg == "--port":
+            result.extend(["--port", "0"])
+            skip_next = True
+            saw_port = True
+            continue
+        if arg.startswith("--port="):
+            result.append("--port=0")
+            saw_port = True
+            continue
+        result.append(arg)
+
+    if not saw_port:
+        result.extend(["--port", "0"])
+    if was_headless and "--browser" not in result:
+        result.append("--browser")
+    return result
+
+
+def launch_elevated_instance() -> tuple[bool, str]:
+    if platform.system() != "Windows":
+        return False, "当前系统不支持从界面直接申请提权，请使用管理员/root 权限重新启动应用。"
+
+    executable = sys.executable
+    script = Path(sys.argv[0]).resolve()
+    args = " ".join([f'"{script}"', *(f'"{arg}"' for arg in elevated_argv())])
+    result = ctypes.windll.shell32.ShellExecuteW(
+        None,
+        "runas",
+        executable,
+        args,
+        str(PROJECT_ROOT),
+        1,
+    )
+    if int(result) <= 32:
+        return False, "提权请求未能启动，可能是用户取消了授权。"
+    return True, "已发起管理员权限请求，请在系统弹窗中确认；授权后会打开新的管理员权限窗口。"
 
 
 def now_iso() -> str:
@@ -481,6 +536,7 @@ class FocusService:
                 "hosts_path": blocker_status.hosts_path,
                 "block_ip": blocker_status.block_ip,
                 "active_domains": blocker_status.active_domains,
+                "elevation_supported": platform.system() == "Windows",
             },
         }
 
@@ -540,6 +596,14 @@ class ConcentrateRequestHandler(BaseHTTPRequestHandler):
 
         if parsed.path == "/api/settings":
             self._send_json(self.server.service.update_settings(body))
+            return
+
+        if parsed.path == "/api/elevate":
+            launched, message = launch_elevated_instance()
+            self._send_json(
+                {"launched": launched, "message": message},
+                status=HTTPStatus.OK if launched else HTTPStatus.BAD_REQUEST,
+            )
             return
 
         if parsed.path == "/api/tasks":

@@ -104,7 +104,18 @@ window.SettingsPage = {
                 <strong>{{ $root.blockerStateText }}</strong>
                 <small>{{ $root.blockerDetailText }}</small>
               </div>
-              <span>{{ $root.blockerTargetLabel }}</span>
+              <div class="blocker-status-actions">
+                <span>{{ $root.blockerTargetLabel }}</span>
+                <button
+                  v-if="!$root.blocker.is_admin"
+                  class="subtle-button"
+                  type="button"
+                  :disabled="$root.elevationRequesting || !$root.blocker.elevation_supported"
+                  @click="$root.requestElevation"
+                >
+                  {{ $root.elevationRequesting ? "请求中" : "申请提权" }}
+                </button>
+              </div>
             </div>
 
             <div v-if="$root.blockerActiveDomains.length" class="hosts-domain-list" aria-label="hosts 中已写入的网站">

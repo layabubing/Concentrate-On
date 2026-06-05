@@ -87,6 +87,7 @@ const app = Vue.createApp({
           hosts_path: "",
           block_ip: "0.0.0.0",
           active_domains: [],
+          elevation_supported: false,
         },
       },
       navItems: [
@@ -130,6 +131,8 @@ const app = Vue.createApp({
       apiOnline: false,
       lastSyncAt: "",
       lastApiError: "",
+      elevationRequesting: false,
+      elevationMessage: "",
       dailyQuote: "",
       dailyQuoteLoading: false,
       dailyQuoteError: "",
@@ -232,6 +235,9 @@ const app = Vue.createApp({
     },
 
     blockerStateText() {
+      if (this.elevationMessage) {
+        return this.elevationMessage;
+      }
       if (!this.apiOnline) {
         return "正在连接后端";
       }
@@ -390,6 +396,7 @@ const app = Vue.createApp({
           hosts_path: "",
           block_ip: "0.0.0.0",
           active_domains: [],
+          elevation_supported: false,
           ...(snapshot.blocker || {}),
         },
       };
@@ -511,6 +518,23 @@ const app = Vue.createApp({
         this.setSessionMessage(`操作失败：${error.message}`);
       } finally {
         this.submitting = false;
+      }
+    },
+
+    async requestElevation() {
+      if (this.elevationRequesting || this.blocker.is_admin) {
+        return;
+      }
+
+      this.elevationRequesting = true;
+      this.elevationMessage = "正在发起管理员权限请求。";
+      try {
+        const payload = await this.request("/api/elevate", { method: "POST" });
+        this.elevationMessage = payload.message || "已发起管理员权限请求。";
+      } catch (error) {
+        this.elevationMessage = `提权失败：${error.message}`;
+      } finally {
+        this.elevationRequesting = false;
       }
     },
 
