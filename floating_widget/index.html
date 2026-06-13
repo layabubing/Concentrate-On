@@ -5,6 +5,21 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Floating Widget Demo</title>
   <style>
+    :root {
+      color-scheme: light;
+      --bg: rgba(255, 255, 255, 0.94);
+      --panel: rgba(248, 250, 252, 0.92);
+      --text: #102033;
+      --muted: #66758a;
+      --line: rgba(16, 32, 51, 0.12);
+      --track: #dbe4ee;
+      --fill-start: #0f9d7a;
+      --fill-end: #f59e0b;
+      --accent: #0f766e;
+      --offline: #94a3b8;
+      --danger: #dc2626;
+    }
+
     * {
       box-sizing: border-box;
     }
@@ -16,18 +31,27 @@
       margin: 0;
       overflow: hidden;
       background: transparent;
-      font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
-      color: #1f2937;
+      font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+      color: var(--text);
       user-select: none;
     }
 
+    body {
+      padding: 0;
+    }
+
     .widget {
+      display: grid;
+      grid-template-rows: auto 1fr;
       width: 100vw;
       height: 100vh;
       padding: 14px;
-      background: rgba(255, 255, 255, 0.94);
-      border: 1px solid rgba(31, 41, 55, 0.12);
+      border: 1px solid var(--line);
       border-radius: 16px;
+      background:
+        radial-gradient(circle at top left, rgba(15, 118, 110, 0.12), transparent 42%),
+        linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(241, 245, 249, 0.92)),
+        var(--bg);
       box-shadow: 0 18px 45px rgba(15, 23, 42, 0.24);
       backdrop-filter: blur(18px);
     }
@@ -37,28 +61,30 @@
       align-items: center;
       justify-content: space-between;
       gap: 12px;
-      height: 36px;
+      min-height: 32px;
     }
 
     .title {
       display: flex;
       align-items: center;
-      gap: 9px;
+      gap: 8px;
       min-width: 0;
-      font-size: 14px;
+      font-size: 13px;
       font-weight: 700;
     }
 
-    .pin {
-      display: grid;
-      width: 22px;
-      height: 22px;
-      place-items: center;
-      border-radius: 7px;
-      background: #2563eb;
-      color: #fff;
-      font-size: 13px;
-      line-height: 1;
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: var(--offline);
+      box-shadow: 0 0 0 4px rgba(148, 163, 184, 0.18);
+      transition: background 160ms ease, box-shadow 160ms ease;
+    }
+
+    .dot.online {
+      background: var(--accent);
+      box-shadow: 0 0 0 4px rgba(15, 118, 110, 0.18);
     }
 
     .close {
@@ -77,77 +103,107 @@
 
     .close:hover {
       background: #fee2e2;
-      color: #b91c1c;
+      color: var(--danger);
     }
 
     .content {
       display: grid;
-      gap: 10px;
-      padding-top: 12px;
+      align-content: start;
+      gap: 12px;
+      padding-top: 10px;
+    }
+
+    .status-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .status-label {
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 54px;
+      height: 24px;
+      padding: 0 10px;
+      border-radius: 999px;
+      background: rgba(15, 118, 110, 0.1);
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .status-badge.offline {
+      background: rgba(148, 163, 184, 0.14);
+      color: #64748b;
     }
 
     .timer {
-      display: flex;
-      align-items: baseline;
-      gap: 8px;
-      color: #0f172a;
+      display: grid;
+      gap: 4px;
+      padding: 14px;
+      border-radius: 14px;
+      background: var(--panel);
+      border: 1px solid rgba(15, 23, 42, 0.06);
     }
 
     .time {
       font-size: 34px;
       font-weight: 800;
-      letter-spacing: 0;
       line-height: 1;
+      letter-spacing: 0;
     }
 
-    .label {
-      color: #64748b;
-      font-size: 13px;
-      font-weight: 600;
+    .subtext {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
     }
 
     .progress {
-      height: 8px;
+      height: 10px;
       overflow: hidden;
       border-radius: 999px;
-      background: #e2e8f0;
+      background: var(--track);
     }
 
     .progress span {
       display: block;
-      width: 64%;
+      width: 0;
       height: 100%;
       border-radius: inherit;
-      background: linear-gradient(90deg, #2563eb, #22c55e);
+      background: linear-gradient(90deg, var(--fill-start), var(--fill-end));
+      transition: width 220ms ease;
     }
 
-    .hint {
-      margin: 0;
-      color: #64748b;
-      font-size: 12px;
-      line-height: 1.6;
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
     }
 
-    .actions {
-      display: flex;
-      gap: 8px;
+    .stat {
+      padding: 12px;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.58);
+      border: 1px solid rgba(15, 23, 42, 0.06);
+    }
+
+    .stat-label {
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .stat-value {
       padding-top: 4px;
-    }
-
-    .action {
-      flex: 1;
-      height: 32px;
-      border: 0;
-      border-radius: 8px;
-      background: #f1f5f9;
-      color: #334155;
-      cursor: pointer;
-      font-weight: 700;
-    }
-
-    .action.primary {
-      background: #2563eb;
-      color: #fff;
+      font-size: 16px;
+      font-weight: 800;
     }
 
     button {
@@ -158,44 +214,151 @@
 </head>
 <body>
   <main class="widget">
-    <header class="titlebar" id="drag-region">
+    <header class="titlebar">
       <div class="title">
-        <span class="pin">置</span>
-        <span>顶层浮窗 Demo</span>
+        <span class="dot" id="sync-dot"></span>
+        <span>ConcentrateOn 浮窗</span>
       </div>
       <button class="close" type="button" aria-label="关闭" id="close-button">×</button>
     </header>
 
     <section class="content">
-      <div class="timer">
-        <span class="time">25:00</span>
-        <span class="label">专注中</span>
+      <div class="status-row">
+        <span class="status-label" id="status-label">等待专注开始</span>
+        <span class="status-badge offline" id="status-badge">离线</span>
       </div>
+
+      <section class="timer">
+        <div class="time" id="time-text">45:00</div>
+        <div class="subtext" id="status-text">在主窗口开始一次专注后，这里会实时显示进度。</div>
+      </section>
 
       <div class="progress" aria-hidden="true">
-        <span></span>
+        <span id="progress-fill"></span>
       </div>
 
-      <p class="hint">窗口使用 pywebview 的 on_top 保持置顶，并通过 easy_drag 支持整体拖动。</p>
-
-      <div class="actions">
-        <button class="action primary" type="button">开始</button>
-        <button class="action" type="button">暂停</button>
-      </div>
+      <section class="stats">
+        <article class="stat">
+          <div class="stat-label">已完成</div>
+          <div class="stat-value" id="progress-text">0%</div>
+        </article>
+        <article class="stat">
+          <div class="stat-label">计划时长</div>
+          <div class="stat-value" id="planned-text">45 分钟</div>
+        </article>
+      </section>
     </section>
   </main>
 
   <script>
     const closeButton = document.getElementById("close-button");
+    const syncDot = document.getElementById("sync-dot");
+    const statusLabel = document.getElementById("status-label");
+    const statusBadge = document.getElementById("status-badge");
+    const timeText = document.getElementById("time-text");
+    const statusText = document.getElementById("status-text");
+    const progressFill = document.getElementById("progress-fill");
+    const progressText = document.getElementById("progress-text");
+    const plannedText = document.getElementById("planned-text");
+
+    let snapshot = {
+      connected: false,
+      source: "offline",
+      session_active: false,
+      session_type: "focus",
+      planned_minutes: 45,
+      elapsed_seconds: 0,
+      remaining_seconds: 2700,
+      progress_percent: 0,
+      title: "等待专注开始",
+      status_text: "在主窗口开始一次专注后，这里会实时显示进度。"
+    };
 
     function apiReady() {
       return window.pywebview && window.pywebview.api;
+    }
+
+    function formatDuration(totalSeconds) {
+      const seconds = Math.max(0, Math.floor(totalSeconds));
+      const minutes = Math.floor(seconds / 60);
+      const remain = seconds % 60;
+      return `${String(minutes).padStart(2, "0")}:${String(remain).padStart(2, "0")}`;
+    }
+
+    function effectiveSnapshot() {
+      if (!snapshot.session_active || !snapshot.synced_at) {
+        return snapshot;
+      }
+
+      const drift = Math.max(0, Math.floor(Date.now() / 1000) - snapshot.synced_at);
+      const elapsed = snapshot.elapsed_seconds + drift;
+      const plannedSeconds = snapshot.planned_minutes * 60;
+      const remaining = Math.max(0, plannedSeconds - elapsed);
+      const progress = Math.min(100, Math.max(0, Math.floor((Math.min(elapsed, plannedSeconds) / plannedSeconds) * 100)));
+
+      return {
+        ...snapshot,
+        elapsed_seconds: elapsed,
+        remaining_seconds: remaining,
+        progress_percent: progress
+      };
+    }
+
+    function render() {
+      const state = effectiveSnapshot();
+      statusLabel.textContent = state.title;
+      statusText.textContent = state.status_text;
+      plannedText.textContent = `${state.planned_minutes} 分钟`;
+      progressText.textContent = `${state.progress_percent}%`;
+      progressFill.style.width = `${state.progress_percent}%`;
+
+      if (state.session_active) {
+        timeText.textContent = formatDuration(state.remaining_seconds);
+      } else {
+        timeText.textContent = formatDuration(state.remaining_seconds);
+      }
+
+      const online = Boolean(state.connected);
+      syncDot.classList.toggle("online", online);
+      statusBadge.classList.toggle("offline", !online);
+      statusBadge.textContent = online ? "已连接" : (state.source === "state" ? "本地" : "离线");
+    }
+
+    async function refreshSnapshot() {
+      if (!apiReady()) {
+        return;
+      }
+
+      try {
+        snapshot = await window.pywebview.api.fetch_snapshot();
+      } catch (error) {
+        snapshot = {
+          connected: false,
+          source: "offline",
+          session_active: false,
+          session_type: "focus",
+          planned_minutes: 45,
+          elapsed_seconds: 0,
+          remaining_seconds: 2700,
+          progress_percent: 0,
+          title: "连接失败",
+          status_text: "暂时无法读取主程序状态。"
+        };
+      }
+
+      render();
     }
 
     closeButton.addEventListener("click", () => {
       if (apiReady()) {
         window.pywebview.api.close();
       }
+    });
+
+    window.addEventListener("pywebviewready", () => {
+      refreshSnapshot();
+      window.setInterval(refreshSnapshot, 4000);
+      window.setInterval(render, 1000);
     });
   </script>
 </body>
