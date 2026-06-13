@@ -1,24 +1,48 @@
+from __future__ import annotations
+
+from pathlib import Path
+
 import webview
 
-class TodoAPI:
-    def get_todos(self):
-        return ["学习 PyWebView", "写一个浮窗"]
 
-api = TodoAPI()
+ROOT = Path(__file__).resolve().parent
+HTML_FILE = ROOT / "index.html"
+WINDOW_WIDTH = 320
+WINDOW_HEIGHT = 220
+WINDOW: webview.Window | None = None
 
-# 正确做法：直接在 create_window 中设置
-window = webview.create_window(
-    title='Todo Floating Window',
-    url='index.html',       
-    js_api=api,             
-    width=320,
-    height=450,
-    frameless=True,         # 无边框
-    on_top=True,            # 置顶
-    # 关键点 1：不要写 hex 颜色，直接设置为透明关键字（支持空字符串、'transparent' 或不写）
-    # pywebview 内部会识别并开启底层窗口的透明通道
-    # background_color='transparent' 
-)
 
-# 关键点 2：start() 保持干净，不要加任何自定义参数
-webview.start(debug=True)
+class FloatingWidgetAPI:
+    def close(self) -> None:
+        if WINDOW is not None:
+            WINDOW.destroy()
+
+
+def main() -> None:
+    global WINDOW
+
+    api = FloatingWidgetAPI()
+    WINDOW = webview.create_window(
+        title="ConcentrateOn Float",
+        url=str(HTML_FILE),
+        js_api=api,
+        width=WINDOW_WIDTH,
+        height=WINDOW_HEIGHT,
+        x=80,
+        y=80,
+        frameless=True,
+        easy_drag=True,
+        resizable=False,
+        on_top=True,
+        transparent=True,
+        background_color="#000000",
+        shadow=True,
+    )
+    if WINDOW is None:
+        raise RuntimeError("Failed to create floating window.")
+
+    webview.start()
+
+
+if __name__ == "__main__":
+    main()
