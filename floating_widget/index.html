@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        /* 浮窗基本样式 */
+        body {
+            margin: 0; padding: 15px; font-family: sans-serif;
+            background: rgba(255, 255, 255, 0.95); border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+            -webkit-app-region: drag; /* 关键：允许整个窗口通过鼠标拖动 */
+        }
+        input, button { -webkit-app-region: no-drag; } /* 按钮和输入框取消拖动，否则无法点击 */
+    </style>
+</head>
+<body>
+    <h3>📌 今日待办</h3>
+    <ul id="todo-list"></ul>
+    <input type="text" id="new-todo" placeholder="添加新任务...">
+    <button onclick="addTodo()">添加</button>
+
+    <script>
+        // 当 PyWebView 注入完成后初始化数据
+        window.addEventListener('pywebviewready', async () => {
+            // 调用 Python 的 get_todos 方法
+            const todos = await window.pywebview.api.get_todos();
+            renderTodos(todos);
+        });
+
+        function renderTodos(todos) {
+            const list = document.getElementById('todo-list');
+            list.innerHTML = todos.map(t => `<li>${t}</li>`).join('');
+        }
+
+        async function addTodo() {
+            const input = document.getElementById('new-todo');
+            if (!input.value) return;
+            // 调用 Python 的 add_todo 方法并接收返回值
+            const res = await window.pywebview.api.add_todo(input.value);
+            if (res.status === 'success') {
+                renderTodos(res.todos);
+                input.value = '';
+            }
+        }
+    </script>
+</body>
+</html>
