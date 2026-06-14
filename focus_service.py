@@ -1,0 +1,345 @@
+from __future__ import annotations
+
+import atexit
+import platform
+import threading
+import time
+from dataclasses import asdict
+from datetime import datetime
+from typing import Any
+
+from ban_website.redirector import WebsiteBlocker, normalize_domain
+from models import ActiveSession, SessionRecord, Settings, TaskItem, now_iso, parse_datetime
+from state_store import StateStore
+
+def sanitize_domain_list(raw_domains: list[str] | str | None) -> list[str]:
+    if raw_domains is None:
+        return []
+
+    if isinstance(raw_domains, str):
+        candidates = raw_domains.replace("\r", "").replace(",", "\n").split("\n")
+    else:
+        candidates = [str(item) for item in raw_domains]
+
+    domains: list[str] = []
+    for candidate in candidates:
+        cleaned = normalize_domain(candidate)
+        if not cleaned:
+            continue
+        if cleaned and cleaned not in domains:
+            domains.append(cleaned)
+    return domains
+
+def normalize_bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+class FocusService:
+    def __init__(self, store: StateStore, blocker: WebsiteBlocker) -> None:
+        self.store = store
+        self.blocker = blocker
+        self.lock = threading.Lock()
+        self.state = store.load()
+        self._recover_previous_session()
+        atexit.register(self.shutdown)
+
+    def snapshot(self) -> dict[str, Any]:
+        with self.lock:
+            return self._build_snapshot()
+
+    def update_settings(self, payload: dict[str, Any]) -> dict[str, Any]:
+        with self.lock:
+            domains = payload.get("blocked_domains", self.state.settings.blocked_domains)
+            session_minutes = self._clamp_minutes(payload.get("session_minutes", self.state.settings.session_minutes), 5, 240)
+            pomodoro_minutes = self._clamp_minutes(payload.get("pomodoro_minutes", self.state.settings.pomodoro_minutes), 5, 120)
+            short_break_minutes = self._clamp_minutes(payload.get("short_break_minutes", self.state.settings.short_break_minutes), 1, 60)
+            long_break_minutes = self._clamp_minutes(payload.get("long_break_minutes", self.state.settings.long_break_minutes), 1, 90)
+            long_break_every = max(2, min(int(payload.get("long_break_every", self.state.settings.long_break_every)), 12))
+            theme_mode = self._normalize_theme_mode(payload.get("theme_mode", self.state.settings.theme_mode))
+            color_scheme = self._normalize_color_scheme(payload.get("color_scheme", self.state.settings.color_scheme))
+            daily_quote_enabled = normalize_bool(
+                payload.get("daily_quote_enabled"),
+                self.state.settings.daily_quote_enabled,
+            )
+
+            self.state.settings = Settings(
+                blocked_domains=sanitize_domain_list(domains),
+                session_minutes=session_minutes,
+                pomodoro_minutes=pomodoro_minutes,
+                short_break_minutes=short_break_minutes,
+                long_break_minutes=long_break_minutes,
+                long_break_every=long_break_every,
+                theme_mode=theme_mode,
+                color_scheme=color_scheme,
+                daily_quote_enabled=daily_quote_enabled,
+            )
+
+            if self.state.current_session is not None:
+                current = self.state.current_session
+                if current.session_type == "pomodoro":
+                    current.planned_minutes = pomodoro_minutes
+                elif current.session_type == "short_break":
+                    current.planned_minutes = short_break_minutes
+                elif current.session_type == "long_break":
+                    current.planned_minutes = long_break_minutes
+                else:
+                    current.planned_minutes = session_minutes
+                current.blocked_domains = list(self.state.settings.blocked_domains)
+                self._refresh_blocking()
+
+            self.store.save(self.state)
+            return self._build_snapshot()
+
+    def add_task(self, payload: dict[str, Any]) -> dict[str, Any]:
+        with self.lock:
+            title = str(payload.get("title", "")).strip()
+            if title:
+                self.state.tasks.append(TaskItem(id=str(int(time.time() * 1000)), title=title))
+                self.store.save(self.state)
+            return self._build_snapshot()
+
+    def update_task(self, task_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        with self.lock:
+            task = self._find_task(task_id)
+            if task is not None:
+                if "title" in payload:
+                    title = str(payload.get("title", "")).strip()
+                    if title:
+                        task.title = title
+                if "completed" in payload:
+                    task.completed = bool(payload["completed"])
+                self.store.save(self.state)
+            return self._build_snapshot()
+
+    def delete_task(self, task_id: str) -> dict[str, Any]:
+        with self.lock:
+            self.state.tasks = [task for task in self.state.tasks if task.id != task_id]
+            if self.state.current_session:
+                if self.state.current_session.task_id == task_id:
+                    self.state.current_session.task_id = None
+                self.state.current_session.task_ids = [
+                    item for item in self._session_task_ids(self.state.current_session) if item != task_id
+                ]
+                self.state.current_session.task_id = (
+                    self.state.current_session.task_ids[0] if self.state.current_session.task_ids else None
+                )
+            self.store.save(self.state)
+            return self._build_snapshot()
+
+    def start_focus(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        with self.lock:
+            if self.state.current_session is not None:
+                return self._build_snapshot()
+
+            payload = payload or {}
+            session_type = str(payload.get("session_type", "focus"))
+            if session_type not in {"focus", "pomodoro", "short_break", "long_break"}:
+                session_type = "focus"
+            task_ids = self._normalize_task_ids(payload.get("task_ids"), payload.get("task_id"))
+            task_id = task_ids[0] if task_ids else None
+            planned_minutes = self._planned_minutes_for(session_type)
+
+            session = ActiveSession(
+                started_at=now_iso(),
+                planned_minutes=planned_minutes,
+                blocked_domains=list(self.state.settings.blocked_domains),
+                blocking_active=False,
+                session_type=session_type,
+                task_id=task_id,
+                task_ids=task_ids,
+                blocking_message=None,
+            )
+            self.state.current_session = session
+            self._refresh_blocking()
+            self.store.save(self.state)
+            return self._build_snapshot()
+
+    def stop_focus(self) -> dict[str, Any]:
+        with self.lock:
+            if self.state.current_session is None:
+                return self._build_snapshot()
+
+            session = self.state.current_session
+            started_at = parse_datetime(session.started_at)
+            ended_at = datetime.now()
+            duration_seconds = max(0, int((ended_at - started_at).total_seconds()))
+            self.state.history.append(
+                SessionRecord(
+                    started_at=session.started_at,
+                    ended_at=ended_at.isoformat(timespec="seconds"),
+                    duration_seconds=duration_seconds,
+                    blocked_domains=list(session.blocked_domains),
+                    session_type=session.session_type,
+                    task_id=session.task_id,
+                    task_ids=self._session_task_ids(session),
+                )
+            )
+            if session.session_type == "pomodoro":
+                for task_id in self._session_task_ids(session):
+                    task = self._find_task(task_id)
+                    if task is not None:
+                        task.pomodoros += 1
+
+            self.state.current_session = None
+            self._disable_blocking()
+            self.store.save(self.state)
+            return self._build_snapshot()
+
+    def shutdown(self) -> None:
+        with self.lock:
+            self._disable_blocking()
+            self.store.save(self.state)
+
+    def _recover_previous_session(self) -> None:
+        if self.state.current_session is None:
+            return
+
+        session = self.state.current_session
+        duration_seconds = max(0, int((datetime.now() - parse_datetime(session.started_at)).total_seconds()))
+        self.state.history.append(
+            SessionRecord(
+                started_at=session.started_at,
+                ended_at=now_iso(),
+                duration_seconds=duration_seconds,
+                blocked_domains=list(session.blocked_domains),
+                session_type=session.session_type,
+                task_id=session.task_id,
+                task_ids=self._session_task_ids(session),
+            )
+        )
+        self.state.current_session = None
+        self._disable_blocking()
+        self.store.save(self.state)
+
+    def _refresh_blocking(self) -> None:
+        session = self.state.current_session
+        if session is None:
+            return
+
+        if not session.blocked_domains:
+            session.blocking_active = False
+            session.blocking_message = "当前没有配置需要屏蔽的网站。"
+            return
+
+        try:
+            self.blocker.apply(session.blocked_domains)
+            session.blocking_active = True
+            session.blocking_message = None
+        except PermissionError:
+            session.blocking_active = False
+            session.blocking_message = "专注已开始，但当前没有管理员权限，网站屏蔽未生效。"
+        except Exception as exc:
+            session.blocking_active = False
+            session.blocking_message = f"网站屏蔽启动失败：{exc}"
+
+    def _disable_blocking(self) -> None:
+        try:
+            self.blocker.clear()
+        except Exception:
+            pass
+
+    def _clamp_minutes(self, value: Any, minimum: int, maximum: int) -> int:
+        return max(minimum, min(int(value), maximum))
+
+    def _normalize_theme_mode(self, value: Any) -> str:
+        theme_mode = str(value or "light")
+        return theme_mode if theme_mode in {"light", "dark"} else "light"
+
+    def _normalize_color_scheme(self, value: Any) -> str:
+        color_scheme = str(value or "blue")
+        return color_scheme if color_scheme in {"blue", "green", "red", "yellow"} else "blue"
+
+    def _planned_minutes_for(self, session_type: str) -> int:
+        if session_type == "pomodoro":
+            return self.state.settings.pomodoro_minutes
+        if session_type == "short_break":
+            return self.state.settings.short_break_minutes
+        if session_type == "long_break":
+            return self.state.settings.long_break_minutes
+        return self.state.settings.session_minutes
+
+    def _find_task(self, task_id: str) -> TaskItem | None:
+        return next((task for task in self.state.tasks if task.id == task_id), None)
+
+    def _normalize_task_ids(self, raw_task_ids: Any, fallback_task_id: Any = None) -> list[str]:
+        if isinstance(raw_task_ids, list):
+            candidates = raw_task_ids
+        elif raw_task_ids is None:
+            candidates = [fallback_task_id] if fallback_task_id else []
+        else:
+            candidates = [raw_task_ids]
+
+        task_ids: list[str] = []
+        for candidate in candidates:
+            task_id = str(candidate or "").strip()
+            if task_id and task_id not in task_ids and self._find_task(task_id) is not None:
+                task_ids.append(task_id)
+        return task_ids
+
+    def _session_task_ids(self, session: ActiveSession | SessionRecord) -> list[str]:
+        raw_task_ids = getattr(session, "task_ids", [])
+        task_ids = raw_task_ids if isinstance(raw_task_ids, list) else []
+        if not task_ids and getattr(session, "task_id", None):
+            task_ids = [str(session.task_id)]
+        return [task_id for task_id in task_ids if self._find_task(task_id) is not None]
+
+    def _build_snapshot(self) -> dict[str, Any]:
+        current = self.state.current_session
+        total_seconds = sum(item.duration_seconds for item in self.state.history)
+        today = datetime.now().date()
+        today_sessions = [
+            item
+            for item in self.state.history
+            if parse_datetime(item.ended_at).date() == today
+        ]
+        blocker_status = self.blocker.status()
+
+        completed_pomodoros = sum(1 for item in self.state.history if item.session_type == "pomodoro")
+        next_break_type = (
+            "long_break"
+            if completed_pomodoros > 0 and completed_pomodoros % self.state.settings.long_break_every == 0
+            else "short_break"
+        )
+
+        response: dict[str, Any] = {
+            "settings": asdict(self.state.settings),
+            "current_session": None,
+            "tasks": [asdict(item) for item in self.state.tasks],
+            "pomodoro": {
+                "completed": completed_pomodoros,
+                "next_break_type": next_break_type,
+            },
+            "stats": {
+                "total_sessions": len(self.state.history),
+                "total_focus_seconds": total_seconds,
+                "today_sessions": len(today_sessions),
+                "today_focus_seconds": sum(item.duration_seconds for item in today_sessions),
+            },
+            "recent_sessions": [asdict(item) for item in reversed(self.state.history[-8:])],
+            "blocker": {
+                "is_admin": blocker_status.is_admin,
+                "hosts_path": blocker_status.hosts_path,
+                "block_ip": blocker_status.block_ip,
+                "active_domains": blocker_status.active_domains,
+                "elevation_supported": platform.system() == "Windows",
+            },
+        }
+
+        if current is not None:
+            current_task_ids = self._session_task_ids(current)
+            response["current_session"] = {
+                **asdict(current),
+                "task_id": current_task_ids[0] if current_task_ids else None,
+                "task_ids": current_task_ids,
+                "elapsed_seconds": max(
+                    0,
+                    int((datetime.now() - parse_datetime(current.started_at)).total_seconds()),
+                ),
+            }
+
+        return response
