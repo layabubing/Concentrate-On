@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from datetime import datetime
-from typing import Any
+from pathlib import Path
+from typing import Any, Protocol
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
@@ -19,6 +19,11 @@ RUNTIME_FILE = DATA_ROOT / "runtime.json"
 WINDOW_WIDTH = 320
 WINDOW_HEIGHT = 220
 WINDOW: webview.Window | None = None
+DESKTOP_ACTIONS: "DesktopActions | None" = None
+
+
+class DesktopActions(Protocol):
+    def restore_main_window(self) -> None: ...
 
 
 def parse_datetime(value: str) -> datetime:
@@ -27,6 +32,34 @@ def parse_datetime(value: str) -> datetime:
 
 def now_seconds() -> int:
     return int(datetime.now().timestamp())
+
+
+def register_desktop_actions(actions: DesktopActions | None) -> None:
+    global DESKTOP_ACTIONS
+    DESKTOP_ACTIONS = actions
+
+
+def create_floating_window(minimized: bool = False) -> webview.Window | None:
+    global WINDOW
+
+    WINDOW = webview.create_window(
+        title="ConcentrateOn Float",
+        url=str(HTML_FILE),
+        js_api=FloatingWidgetAPI(),
+        width=WINDOW_WIDTH,
+        height=WINDOW_HEIGHT,
+        x=80,
+        y=80,
+        frameless=True,
+        easy_drag=True,
+        resizable=False,
+        on_top=True,
+        transparent=True,
+        background_color="#000000",
+        shadow=True,
+        minimized=minimized,
+    )
+    return WINDOW
 
 
 class FloatingWidgetAPI:
@@ -38,6 +71,10 @@ class FloatingWidgetAPI:
         return self._normalize_snapshot(snapshot)
 
     def close(self) -> None:
+        if DESKTOP_ACTIONS is not None:
+            DESKTOP_ACTIONS.restore_main_window()
+            return
+
         if WINDOW is not None:
             WINDOW.destroy()
 
@@ -65,8 +102,8 @@ class FloatingWidgetAPI:
 
         if isinstance(payload, dict):
             payload["_source"] = "runtime"
-            payload["_address"] = address
             return payload
+
         return None
 
     def _load_state_snapshot(self) -> dict[str, Any]:
@@ -111,6 +148,7 @@ class FloatingWidgetAPI:
         planned_minutes = max(1, int(session.get("planned_minutes", settings.get("session_minutes", 45)) or 45))
         started_at = str(session.get("started_at", "")).strip()
         elapsed_seconds = int(session.get("elapsed_seconds", 0) or 0)
+
         if started_at and source != "runtime":
             try:
                 elapsed_seconds = max(0, int((datetime.now() - parse_datetime(started_at)).total_seconds()))
@@ -148,26 +186,8 @@ class FloatingWidgetAPI:
 
 
 def main() -> None:
-    global WINDOW
-
-    api = FloatingWidgetAPI()
-    WINDOW = webview.create_window(
-        title="ConcentrateOn Float",
-        url=str(HTML_FILE),
-        js_api=api,
-        width=WINDOW_WIDTH,
-        height=WINDOW_HEIGHT,
-        x=80,
-        y=80,
-        frameless=True,
-        easy_drag=True,
-        resizable=False,
-        on_top=True,
-        transparent=True,
-        background_color="#000000",
-        shadow=True,
-    )
-    if WINDOW is None:
+    window = create_floating_window(minimized=False)
+    if window is None:
         raise RuntimeError("Failed to create floating window.")
 
     webview.start()

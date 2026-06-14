@@ -382,7 +382,32 @@ const app = Vue.createApp({
       }
     },
 
+    async callDesktopBridge(methodName) {
+      const api = window.pywebview && window.pywebview.api;
+      if (!api || typeof api[methodName] !== "function") {
+        return;
+      }
+
+      try {
+        await api[methodName]();
+      } catch {
+        // Desktop bridge is optional outside the pywebview runtime.
+      }
+    },
+
+    syncDesktopWindows(previousSession, nextSession) {
+      const wasFocusing = Boolean(previousSession);
+      const isFocusing = Boolean(nextSession);
+
+      if (!wasFocusing && isFocusing) {
+        this.callDesktopBridge("focus_session_started");
+      } else if (wasFocusing && !isFocusing) {
+        this.callDesktopBridge("focus_session_stopped");
+      }
+    },
+
     applySnapshot(snapshot) {
+      const previousSession = this.snapshot.current_session;
       const normalizedSnapshot = {
         ...snapshot,
         settings: {
@@ -403,6 +428,7 @@ const app = Vue.createApp({
 
       this.snapshot = normalizedSnapshot;
       this.localElapsed = normalizedSnapshot.current_session ? normalizedSnapshot.current_session.elapsed_seconds : 0;
+      this.syncDesktopWindows(previousSession, normalizedSnapshot.current_session);
 
       const availableTaskIds = new Set(
         (normalizedSnapshot.tasks || []).filter((task) => !task.completed).map((task) => task.id)
